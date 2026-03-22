@@ -9,7 +9,7 @@ from sklearn.model_selection import train_test_split
 # Load and prepare data
 # ==============================
 
-df = pd.read_csv("Chicago_Traffic_Tracker_-_Historical_Congestion_Estimates_by_Segment_-_2024-Current_20260222.csv")
+df = pd.read_csv("traffic_sample.csv")
 
 # Keep needed columns
 df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']]
