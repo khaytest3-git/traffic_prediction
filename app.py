@@ -105,7 +105,6 @@ st.markdown("---")
 st.subheader("About the Model")
 
 st.write("""
-This model uses Logistic Regression trained on historical traffic data from Chicago.
 This application uses a Logistic Regression model trained on historical traffic data from Chicago.
 The prediction is based on temporal features, including hour of day and day of week.
 
@@ -116,7 +115,7 @@ st.markdown("---")
 st.subheader("Dataset Information")
 
 st.write("""
-This application is trained on historical traffic data from Chicago, consisting of traffic speed observations across different hours and days of the week.
+The model is trained using historical traffic data from Chicago, consisting of traffic speed observations across different hours and days of the week.
 
 A sampled dataset is used in this deployed version to ensure efficient performance within platform constraints.
 """)
