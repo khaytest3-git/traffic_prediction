@@ -105,10 +105,10 @@ st.markdown("---")
 st.subheader("About the Model")
 
 st.write("""
-This application uses a Logistic Regression model trained on historical traffic data from Chicago.
+This application uses a Logistic Regression model to predict traffic congestion.
 The prediction is based on temporal features, including hour of day and day of week.
 
-The model identifies congestion patterns over time and is designed to be scalable, allowing adaptation to other cities using similar traffic datasets.
+The model identifies patterns in traffic congestion over time and is designed to be scalable to other cities using similar datasets.
 """)
 
 st.markdown("---")
