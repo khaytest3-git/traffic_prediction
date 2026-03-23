@@ -9,7 +9,6 @@ from sklearn.model_selection import train_test_split
 # Load and prepare data
 # ==============================
 
-#df = pd.read_csv("Chicago_Traffic_Tracker_-_Historical_Congestion_Estimates_by_Segment_-_2024-Current_20260222.csv")
 df = pd.read_csv("traffic_sample.csv")
 
 # Keep needed columns
@@ -106,10 +105,22 @@ st.markdown("---")
 st.subheader("About the Model")
 
 st.write("""
-This model uses Logistic Regression trained on historical traffic data from Chicago.
-The prediction is based on temporal features:
-- Hour of day
-- Day of week
+This application uses a Logistic Regression model to predict traffic congestion.
+The prediction is based on temporal features, including hour of day and day of week.
 
-The model identifies patterns in traffic congestion based on time.
+The model identifies patterns in traffic congestion over time and is designed to be scalable to other cities using similar datasets.
+""")
+
+
+# ==============================
+# Dataset Information
+# ==============================
+
+st.markdown("---")
+st.subheader("Dataset Information")
+
+st.write("""
+The model is trained using historical traffic data from Chicago, consisting of traffic speed observations across different hours and days of the week.
+
+A sampled dataset is used in this deployed version to ensure efficient performance within platform constraints.
 """)
