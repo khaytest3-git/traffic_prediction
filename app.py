@@ -1,156 +1,115 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 
-from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    confusion_matrix,
-    ConfusionMatrixDisplay,
-    precision_score,
-    recall_score,
-    f1_score
-)
+from sklearn.model_selection import train_test_split
 
 # ==============================
-# Load dataset
+# Load and prepare data
 # ==============================
 
+#df = pd.read_csv("Chicago_Traffic_Tracker_-_Historical_Congestion_Estimates_by_Segment_-_2024-Current_20260222.csv")
 df = pd.read_csv("traffic_sample.csv")
 
-# Keep only needed columns
+# Keep needed columns
 df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']]
 
-print(df.head())
-print(df.isnull().sum())
-
-# ==============================
-# Data Cleaning
-# ==============================
-
+# Clean data
 df = df.dropna()
 df = df[df['SPEED'] > 0]
 
-print("After cleaning:")
-print(df.isnull().sum())
-
-# ==============================
-# Create Target Variable
-# ==============================
-
+# Create target
 df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
 
-print(df['CONGESTION'].value_counts())
-
-# ==============================
-# Features and Target
-# ==============================
-
+# Features
 X = df[['HOUR', 'DAY_OF_WEEK']]
 y = df['CONGESTION']
 
-# ==============================
-# Train-Test Split
-# ==============================
-
+# Train model
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
-# ==============================
-# Logistic Regression
-# ==============================
-
-log_model = LogisticRegression(max_iter=1000, class_weight='balanced')
-log_model.fit(X_train, y_train)
-
-y_pred_log = log_model.predict(X_test)
-
-print("\nLogistic Regression Results")
-print("Accuracy:", accuracy_score(y_test, y_pred_log))
-print(classification_report(y_test, y_pred_log))
-
-# Confusion Matrix - Logistic Regression
-cm_log = confusion_matrix(y_test, y_pred_log)
-
-disp_log = ConfusionMatrixDisplay(
-    confusion_matrix=cm_log,
-    display_labels=["Not Congested", "Congested"]
-)
-disp_log.plot()
-plt.title("Logistic Regression Confusion Matrix")
-plt.show()
+model = LogisticRegression(max_iter=1000, class_weight='balanced')
+model.fit(X_train, y_train)
 
 # ==============================
-# Random Forest
+# Streamlit UI
 # ==============================
 
-rf_model = RandomForestClassifier(
-    n_estimators=100,
-    random_state=42,
-    class_weight='balanced'
-)
+st.title("Traffic Congestion Prediction")
 
-rf_model.fit(X_train, y_train)
+st.write("This application predicts traffic congestion based on temporal factors such as hour of day and day of week.")
 
-y_pred_rf = rf_model.predict(X_test)
-
-print("\nRandom Forest Results")
-print("Accuracy:", accuracy_score(y_test, y_pred_rf))
-print(classification_report(y_test, y_pred_rf))
-
-# Confusion Matrix - Random Forest
-cm_rf = confusion_matrix(y_test, y_pred_rf)
-
-disp_rf = ConfusionMatrixDisplay(
-    confusion_matrix=cm_rf,
-    display_labels=["Not Congested", "Congested"]
-)
-disp_rf.plot()
-plt.title("Random Forest Confusion Matrix")
-plt.show()
+# Create two columns
+col1, col2 = st.columns(2)
 
 # ==============================
-# Model Comparison Table
+# LEFT SIDE → Inputs
 # ==============================
 
-precision_log = precision_score(y_test, y_pred_log)
-recall_log = recall_score(y_test, y_pred_log)
-f1_log = f1_score(y_test, y_pred_log)
+with col1:
+    st.subheader("Input Controls")
 
-precision_rf = precision_score(y_test, y_pred_rf)
-recall_rf = recall_score(y_test, y_pred_rf)
-f1_rf = f1_score(y_test, y_pred_rf)
+    hour = st.slider("Select Hour (0-23)", 0, 23, 8)
 
-results_df = pd.DataFrame({
-    'Model': ['Logistic Regression', 'Random Forest'],
-    'Accuracy': [
-        accuracy_score(y_test, y_pred_log),
-        accuracy_score(y_test, y_pred_rf)
-    ],
-    'Precision': [precision_log, precision_rf],
-    'Recall': [recall_log, recall_rf],
-    'F1-Score': [f1_log, f1_rf]
-})
+    day = st.selectbox(
+        "Select Day of Week",
+        [1,2,3,4,5,6,7],
+        format_func=lambda x: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][x-1]
+    )
 
-print("\nModel Performance Table:")
-print(results_df.round(4))
+    predict_btn = st.button("Predict")
+
 
 # ==============================
-# Feature Importance (Random Forest)
+# RIGHT SIDE → Results
 # ==============================
 
-importance = rf_model.feature_importances_
-features = X.columns
+with col2:
+    st.subheader("Prediction Output")
 
-importance_df = pd.DataFrame({
-    'Feature': features,
-    'Importance': importance
-}).sort_values(by='Importance', ascending=False)
+    if predict_btn:
+        input_data = pd.DataFrame({
+            'HOUR': [hour],
+            'DAY_OF_WEEK': [day]
+        })
 
-print("\nFeature Importance:")
-print(importance_df)
+        prediction = model.predict(input_data)[0]
+        probability = model.predict_proba(input_data)[0][1]
+
+        st.metric("Congestion Probability", f"{probability:.2f}")
+
+        if prediction == 1:
+            st.error("High congestion expected")
+        else:
+            st.success("Low congestion expected")
+
+
+# ==============================
+# Visualization (RQ2)
+# ==============================
+
+st.markdown("---")
+st.subheader("Congestion Pattern by Hour")
+
+hourly_congestion = df.groupby('HOUR')['CONGESTION'].mean()
+st.line_chart(hourly_congestion)
+
+
+# ==============================
+# About Section
+# ==============================
+
+st.markdown("---")
+st.subheader("About the Model")
+
+st.write("""
+This model uses Logistic Regression trained on historical traffic data from Chicago.
+The prediction is based on temporal features:
+- Hour of day
+- Day of week
+
+The model identifies patterns in traffic congestion based on time.
+""")
