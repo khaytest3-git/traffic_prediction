@@ -7,7 +7,6 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import load_model
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -21,6 +20,10 @@ LSTM_MODEL_CANDIDATES = [
 def load_lstm_model():
     for model_path in LSTM_MODEL_CANDIDATES:
         if model_path.exists():
+            try:
+                from tensorflow.keras.models import load_model
+            except ModuleNotFoundError:
+                return None, None
             return load_model(model_path), model_path
     return None, None
 
