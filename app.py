@@ -4,50 +4,50 @@ import numpy as np
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
+from tensorflow.keras.models import load_model
 
-# ==============================
-# Load and prepare data
-# ==============================
 
+# Load dataset
 df = pd.read_csv("traffic_sample.csv")
 
-# Keep needed columns
 df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']]
-
-# Clean data
 df = df.dropna()
 df = df[df['SPEED'] > 0]
 
-# Create target
+# Create congestion label
 df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
 
-# Features
+
+# Train Logistic Regression model
 X = df[['HOUR', 'DAY_OF_WEEK']]
 y = df['CONGESTION']
 
-# Train model
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
-model = LogisticRegression(max_iter=1000, class_weight='balanced')
-model.fit(X_train, y_train)
+lr_model = LogisticRegression(max_iter=1000, class_weight='balanced')
+lr_model.fit(X_train, y_train)
 
-# Streamlit UI
 
+# Load trained LSTM model
+lstm_model = load_model("lstm_model.h5")
+
+SEQUENCE_LENGTH = 6
+
+
+# App title
 st.title("Traffic Congestion Prediction")
 
-st.write("This application predicts traffic congestion based on temporal factors such as hour of day and day of week.")
+st.write("This application predicts traffic congestion using both Logistic Regression and LSTM models.")
 
-# Create two columns
+
+# Logistic Regression section
+st.subheader("Logistic Regression Prediction")
+
 col1, col2 = st.columns(2)
 
-
-# LEFT SIDE → Inputs
-
 with col1:
-    st.subheader("Input Controls")
-
     hour = st.slider("Select Hour (0-23)", 0, 23, 8)
 
     day = st.selectbox(
@@ -58,21 +58,17 @@ with col1:
 
     predict_btn = st.button("Predict")
 
-
-# RIGHT SIDE → Results
-
-
 with col2:
-    st.subheader("Prediction Output")
-
     if predict_btn:
         input_data = pd.DataFrame({
             'HOUR': [hour],
             'DAY_OF_WEEK': [day]
         })
 
-        prediction = model.predict(input_data)[0]
-        probability = model.predict_proba(input_data)[0][1]
+        prediction = lr_model.predict(input_data)[0]
+        probability = lr_model.predict_proba(input_data)[0][1]
+
+        st.caption("Prediction powered by Logistic Regression")
 
         st.metric("Congestion Probability", f"{probability:.2f}")
 
@@ -82,26 +78,34 @@ with col2:
             st.success("Low congestion expected")
 
 
-# LSTM Model Results (Comparison)
-
+# LSTM prediction using recent sequence
 st.markdown("---")
-st.subheader("LSTM Model Performance")
+st.subheader("LSTM Prediction (Recent Traffic Data)")
 
-st.write("""
-This section presents the performance of an LSTM model developed to capture temporal patterns in traffic data.
-""")
+df['SPEED_DELTA'] = df['SPEED'].diff().fillna(0)
+df['SPEED_ROLLING_MEAN'] = df['SPEED'].rolling(window=3).mean().fillna(method='bfill')
 
-col1, col2 = st.columns(2)
+features = ['SPEED', 'HOUR', 'DAY_OF_WEEK', 'SPEED_DELTA', 'SPEED_ROLLING_MEAN']
 
-with col1:
-    st.metric("Accuracy", "0.736")
-    st.metric("Precision (Congestion)", "0.347")
+sequence_data = df[features].values
 
-with col2:
-    st.metric("Recall (Congestion)", "0.204")
-    st.metric("F1 Score", "0.257")
+latest_sequence = sequence_data[-SEQUENCE_LENGTH:]
+latest_sequence = latest_sequence.reshape(1, SEQUENCE_LENGTH, len(features))
+
+lstm_prob = lstm_model.predict(latest_sequence)[0][0]
+lstm_pred = 1 if lstm_prob >= 0.5 else 0
+
+st.metric("LSTM Congestion Probability", f"{lstm_prob:.2f}")
+
+if lstm_pred == 1:
+    st.error("High congestion predicted (LSTM)")
+else:
+    st.success("Low congestion predicted (LSTM)")
+
+st.caption("LSTM uses recent historical data for prediction")
 
 
+# Chart
 st.markdown("---")
 st.subheader("Congestion Pattern by Hour")
 
@@ -109,27 +113,24 @@ hourly_congestion = df.groupby('HOUR')['CONGESTION'].mean()
 st.line_chart(hourly_congestion)
 
 
-
-
+# About section
 st.markdown("---")
 st.subheader("About the Model")
 
 st.write("""
-This application uses a Logistic Regression model to predict traffic congestion.
-The prediction is based on temporal features, including hour of day and day of week.
+This application compares Logistic Regression and LSTM models for traffic congestion prediction.
 
-The model identifies patterns in traffic congestion over time and is designed to be scalable to other cities using similar datasets.
+Logistic Regression uses temporal features for direct prediction, while LSTM uses sequential traffic data to capture time-based patterns.
 """)
 
 
-
+# Dataset info
 st.markdown("---")
 st.subheader("Dataset Information")
 
 st.write("""
-The model is trained using historical traffic data from Chicago, consisting of traffic speed observations across different hours and days of the week.
+The model is trained using historical traffic data from Chicago.
 
-A sampled dataset is used in this deployed version to ensure efficient performance within platform constraints.
+A sampled dataset is used in this deployed version to ensure efficient performance.
 """)
-
 
