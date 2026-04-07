@@ -1,14 +1,32 @@
+from pathlib import Path
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import load_model
 
 
+BASE_DIR = Path(__file__).resolve().parent
+DATASET_PATH = BASE_DIR / "traffic_sample.csv"
+LSTM_MODEL_CANDIDATES = [
+    BASE_DIR / "lstm_model.h5",
+    BASE_DIR / "lstm" / "lstm_model.h5",
+]
+
+
+def load_lstm_model():
+    for model_path in LSTM_MODEL_CANDIDATES:
+        if model_path.exists():
+            return load_model(model_path), model_path
+    return None, None
+
+
 # Load dataset
-df = pd.read_csv("traffic_sample.csv")
+df = pd.read_csv(DATASET_PATH)
 
 df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']]
 df = df.dropna()
@@ -30,8 +48,8 @@ lr_model = LogisticRegression(max_iter=1000, class_weight='balanced')
 lr_model.fit(X_train, y_train)
 
 
-# Load trained LSTM model
-lstm_model = load_model("lstm_model.h5")
+# Load trained LSTM model if available
+lstm_model, lstm_model_path = load_lstm_model()
 
 SEQUENCE_LENGTH = 6
 
@@ -83,24 +101,31 @@ st.markdown("---")
 st.subheader("LSTM Prediction (Recent Traffic Data)")
 
 df['SPEED_DELTA'] = df['SPEED'].diff().fillna(0)
-df['SPEED_ROLLING_MEAN'] = df['SPEED'].rolling(window=3).mean().fillna(method='bfill')
+df['SPEED_ROLLING_MEAN'] = df['SPEED'].rolling(window=SEQUENCE_LENGTH, min_periods=1).mean()
+df['MONTH'] = 1
 
-features = ['SPEED', 'HOUR', 'DAY_OF_WEEK', 'SPEED_DELTA', 'SPEED_ROLLING_MEAN']
+features = ['SPEED', 'HOUR', 'DAY_OF_WEEK', 'MONTH', 'SPEED_DELTA', 'SPEED_ROLLING_MEAN']
 
 sequence_data = df[features].values
+scaler = MinMaxScaler()
+sequence_data = scaler.fit_transform(sequence_data)
 
-latest_sequence = sequence_data[-SEQUENCE_LENGTH:]
-latest_sequence = latest_sequence.reshape(1, SEQUENCE_LENGTH, len(features))
-
-lstm_prob = lstm_model.predict(latest_sequence)[0][0]
-lstm_pred = 1 if lstm_prob >= 0.5 else 0
-
-st.metric("LSTM Congestion Probability", f"{lstm_prob:.2f}")
-
-if lstm_pred == 1:
-    st.error("High congestion predicted (LSTM)")
+if lstm_model is None:
+    st.warning("No trained LSTM model file was found. Save a trained model as `lstm_model.h5` to enable this section.")
 else:
-    st.success("Low congestion predicted (LSTM)")
+    latest_sequence = sequence_data[-SEQUENCE_LENGTH:]
+    latest_sequence = latest_sequence.reshape(1, SEQUENCE_LENGTH, len(features))
+
+    lstm_prob = lstm_model.predict(latest_sequence, verbose=0)[0][0]
+    lstm_pred = 1 if lstm_prob >= 0.5 else 0
+
+    st.caption(f"Loaded LSTM model from {lstm_model_path.name}")
+    st.metric("LSTM Congestion Probability", f"{lstm_prob:.2f}")
+
+    if lstm_pred == 1:
+        st.error("High congestion predicted (LSTM)")
+    else:
+        st.success("Low congestion predicted (LSTM)")
 
 st.caption("LSTM uses recent historical data for prediction")
 
