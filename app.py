@@ -4,6 +4,8 @@ import numpy as np
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
+from sklearn.ensemble import GradientBoostingClassifier
+
 
 
 def load_lstm_model():
@@ -32,6 +34,8 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 lr_model = LogisticRegression(max_iter=1000, class_weight='balanced')
 lr_model.fit(X_train, y_train)
+gb_model = GradientBoostingClassifier()
+gb_model.fit(X_train, y_train)
 
 
 st.title("Traffic Congestion Prediction")
@@ -73,6 +77,32 @@ with col2:
         else:
             st.success("Low congestion expected")
 
+st.markdown("---")
+st.subheader("Gradient Boosting Prediction")
+
+col3, col4 = st.columns(2)
+
+with col3:
+    gb_predict_btn = st.button("Predict with Gradient Boosting")
+
+with col4:
+    if gb_predict_btn:
+        input_data = pd.DataFrame({
+            'HOUR': [hour],
+            'DAY_OF_WEEK': [day]
+        })
+
+        gb_prediction = gb_model.predict(input_data)[0]
+        gb_probability = gb_model.predict_proba(input_data)[0][1]
+
+        st.caption("Prediction powered by Gradient Boosting")
+
+        st.metric("Congestion Probability", f"{gb_probability:.2f}")
+
+        if gb_prediction == 1:
+            st.error("High congestion expected")
+        else:
+            st.success("Low congestion expected")
 
 lstm_model = load_lstm_model()
 
