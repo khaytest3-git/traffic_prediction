@@ -24,7 +24,7 @@ df = df[df['SPEED'] > 0]
 df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
 
 
-X = df[['HOUR', 'DAY_OF_WEEK', 'SPEED']]
+X = df[['HOUR', 'DAY_OF_WEEK']]
 y = df['CONGESTION']
 
 X_train, X_test, y_train, y_test = train_test_split(
@@ -40,17 +40,15 @@ gb_model.fit(X_train, y_train)
 
 st.title("Traffic Congestion Prediction")
 
-st.write("This application predicts traffic congestion using Logistic Regression, Gradient Boosting, and LSTM models.")
+st.write("This application predicts traffic congestion based on time patterns using Logistic Regression, Gradient Boosting, and LSTM models.")
 
 
-st.subheader("Logistic Regression Prediction")
+st.subheader("Prediction")
 
 col1, col2 = st.columns(2)
 
 with col1:
     hour = st.slider("Select Hour (0-23)", 0, 23, 8)
-
-    speed = st.slider("Select Speed (mph)", 0, 60, 30)
 
     day = st.selectbox(
         "Select Day of Week",
@@ -64,16 +62,15 @@ with col2:
     if predict_btn:
         input_data = pd.DataFrame({
             'HOUR': [hour],
-            'DAY_OF_WEEK': [day],
-            'SPEED': [speed]
+            'DAY_OF_WEEK': [day]
         })
 
         prediction = lr_model.predict(input_data)[0]
         probability = lr_model.predict_proba(input_data)[0][1]
 
-        st.caption("Prediction powered by Logistic Regression")
+        st.caption("Logistic Regression")
 
-        st.metric("Congestion Probability", f"{probability:.2f}")
+        st.metric("Congestion Probability (LR)", f"{probability:.2f}")
 
         if prediction == 1:
             st.error("High congestion expected")
@@ -84,36 +81,29 @@ with col2:
 st.markdown("---")
 st.subheader("Gradient Boosting Prediction")
 
-col1, col2 = st.columns(2)
+if predict_btn:
+    input_data = pd.DataFrame({
+        'HOUR': [hour],
+        'DAY_OF_WEEK': [day]
+    })
 
-with col1:
-    st.write("Using the same input values:")
+    gb_prediction = gb_model.predict(input_data)[0]
+    gb_probability = gb_model.predict_proba(input_data)[0][1]
 
-with col2:
-    if predict_btn:
-        input_data = pd.DataFrame({
-            'HOUR': [hour],
-            'DAY_OF_WEEK': [day],
-            'SPEED': [speed]
-        })
+    st.caption("Gradient Boosting")
 
-        gb_prediction = gb_model.predict(input_data)[0]
-        gb_probability = gb_model.predict_proba(input_data)[0][1]
+    st.metric("Congestion Probability (GB)", f"{gb_probability:.2f}")
 
-        st.caption("Prediction powered by Gradient Boosting")
-
-        st.metric("Congestion Probability (GB)", f"{gb_probability:.2f}")
-
-        if gb_prediction == 1:
-            st.error("High congestion expected (GB)")
-        else:
-            st.success("Low congestion expected (GB)")
+    if gb_prediction == 1:
+        st.error("High congestion expected (GB)")
+    else:
+        st.success("Low congestion expected (GB)")
 
 
 lstm_model = load_lstm_model()
 
 st.markdown("---")
-st.subheader("LSTM Prediction (Recent Traffic Data)")
+st.subheader("LSTM Prediction (Recent Data Sequence)")
 
 if lstm_model is not None:
     df['SPEED_DELTA'] = df['SPEED'].diff().fillna(0)
@@ -128,14 +118,14 @@ if lstm_model is not None:
     lstm_prob = lstm_model.predict(latest_sequence)[0][0]
     lstm_pred = 1 if lstm_prob >= 0.5 else 0
 
-    st.metric("LSTM Congestion Probability", f"{lstm_prob:.2f}")
+    st.metric("Congestion Probability (LSTM)", f"{lstm_prob:.2f}")
 
     if lstm_pred == 1:
         st.error("High congestion predicted (LSTM)")
     else:
         st.success("Low congestion predicted (LSTM)")
 
-    st.caption("LSTM uses recent historical sequence data")
+    st.caption("LSTM uses historical sequence data")
 
 else:
     st.warning("LSTM model unavailable in this deployment environment.")
@@ -152,9 +142,11 @@ st.markdown("---")
 st.subheader("About the Model")
 
 st.write("""
-This application compares Logistic Regression, Gradient Boosting, and LSTM models for traffic congestion prediction.
+This dashboard predicts traffic congestion based on temporal patterns.
 
-Logistic Regression and Gradient Boosting use temporal and speed features, while LSTM uses sequential traffic data to capture time-based patterns.
+Logistic Regression and Gradient Boosting use time-based features such as hour and day of week.
+
+LSTM is used to capture sequential patterns from historical traffic data.
 """)
 
 
@@ -164,6 +156,6 @@ st.subheader("Dataset Information")
 st.write("""
 The model is trained using historical traffic data from Chicago.
 
-A sampled dataset is used in this deployed version to ensure efficient performance.
+Congestion is defined based on speed thresholds, but speed is not used as an input feature in the prediction models to ensure meaningful pattern learning.
 """)
 
