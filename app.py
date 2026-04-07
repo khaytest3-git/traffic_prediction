@@ -33,9 +33,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 model = LogisticRegression(max_iter=1000, class_weight='balanced')
 model.fit(X_train, y_train)
 
-# ==============================
 # Streamlit UI
-# ==============================
 
 st.title("Traffic Congestion Prediction")
 
@@ -44,9 +42,8 @@ st.write("This application predicts traffic congestion based on temporal factors
 # Create two columns
 col1, col2 = st.columns(2)
 
-# ==============================
+
 # LEFT SIDE → Inputs
-# ==============================
 
 with col1:
     st.subheader("Input Controls")
@@ -62,9 +59,8 @@ with col1:
     predict_btn = st.button("Predict")
 
 
-# ==============================
 # RIGHT SIDE → Results
-# ==============================
+
 
 with col2:
     st.subheader("Prediction Output")
@@ -86,9 +82,25 @@ with col2:
             st.success("Low congestion expected")
 
 
-# ==============================
-# Visualization (RQ2)
-# ==============================
+# LSTM Model Results (Comparison)
+
+st.markdown("---")
+st.subheader("LSTM Model Performance")
+
+st.write("""
+This section presents the performance of an LSTM model developed to capture temporal patterns in traffic data.
+""")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.metric("Accuracy", "0.736")
+    st.metric("Precision (Congestion)", "0.347")
+
+with col2:
+    st.metric("Recall (Congestion)", "0.204")
+    st.metric("F1 Score", "0.257")
+
 
 st.markdown("---")
 st.subheader("Congestion Pattern by Hour")
@@ -97,9 +109,7 @@ hourly_congestion = df.groupby('HOUR')['CONGESTION'].mean()
 st.line_chart(hourly_congestion)
 
 
-# ==============================
-# About Section
-# ==============================
+
 
 st.markdown("---")
 st.subheader("About the Model")
@@ -112,9 +122,6 @@ The model identifies patterns in traffic congestion over time and is designed to
 """)
 
 
-# ==============================
-# Dataset Information
-# ==============================
 
 st.markdown("---")
 st.subheader("Dataset Information")
@@ -124,3 +131,5 @@ The model is trained using historical traffic data from Chicago, consisting of t
 
 A sampled dataset is used in this deployed version to ensure efficient performance within platform constraints.
 """)
+
+
