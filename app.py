@@ -7,7 +7,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import GradientBoostingClassifier
 
 
-
 def load_lstm_model():
     try:
         from tensorflow.keras.models import load_model
@@ -25,7 +24,7 @@ df = df[df['SPEED'] > 0]
 df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
 
 
-X = df[['HOUR', 'DAY_OF_WEEK']]
+X = df[['HOUR', 'DAY_OF_WEEK', 'SPEED']]
 y = df['CONGESTION']
 
 X_train, X_test, y_train, y_test = train_test_split(
@@ -34,13 +33,14 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 lr_model = LogisticRegression(max_iter=1000, class_weight='balanced')
 lr_model.fit(X_train, y_train)
+
 gb_model = GradientBoostingClassifier()
 gb_model.fit(X_train, y_train)
 
 
 st.title("Traffic Congestion Prediction")
 
-st.write("This application predicts traffic congestion using Logistic Regression and LSTM models.")
+st.write("This application predicts traffic congestion using Logistic Regression, Gradient Boosting, and LSTM models.")
 
 
 st.subheader("Logistic Regression Prediction")
@@ -49,6 +49,8 @@ col1, col2 = st.columns(2)
 
 with col1:
     hour = st.slider("Select Hour (0-23)", 0, 23, 8)
+
+    speed = st.slider("Select Speed (mph)", 0, 60, 30)
 
     day = st.selectbox(
         "Select Day of Week",
@@ -62,7 +64,8 @@ with col2:
     if predict_btn:
         input_data = pd.DataFrame({
             'HOUR': [hour],
-            'DAY_OF_WEEK': [day]
+            'DAY_OF_WEEK': [day],
+            'SPEED': [speed]
         })
 
         prediction = lr_model.predict(input_data)[0]
@@ -77,19 +80,21 @@ with col2:
         else:
             st.success("Low congestion expected")
 
+
 st.markdown("---")
 st.subheader("Gradient Boosting Prediction")
 
-col3, col4 = st.columns(2)
+col1, col2 = st.columns(2)
 
-with col3:
-    gb_predict_btn = st.button("Predict with Gradient Boosting")
+with col1:
+    st.write("Using the same input values:")
 
-with col4:
-    if gb_predict_btn:
+with col2:
+    if predict_btn:
         input_data = pd.DataFrame({
             'HOUR': [hour],
-            'DAY_OF_WEEK': [day]
+            'DAY_OF_WEEK': [day],
+            'SPEED': [speed]
         })
 
         gb_prediction = gb_model.predict(input_data)[0]
@@ -97,12 +102,13 @@ with col4:
 
         st.caption("Prediction powered by Gradient Boosting")
 
-        st.metric("Congestion Probability", f"{gb_probability:.2f}")
+        st.metric("Congestion Probability (GB)", f"{gb_probability:.2f}")
 
         if gb_prediction == 1:
-            st.error("High congestion expected")
+            st.error("High congestion expected (GB)")
         else:
-            st.success("Low congestion expected")
+            st.success("Low congestion expected (GB)")
+
 
 lstm_model = load_lstm_model()
 
@@ -146,9 +152,9 @@ st.markdown("---")
 st.subheader("About the Model")
 
 st.write("""
-This application compares Logistic Regression and LSTM models for traffic congestion prediction.
+This application compares Logistic Regression, Gradient Boosting, and LSTM models for traffic congestion prediction.
 
-Logistic Regression uses temporal features for direct prediction, while LSTM uses sequential traffic data to capture time-based patterns.
+Logistic Regression and Gradient Boosting use temporal and speed features, while LSTM uses sequential traffic data to capture time-based patterns.
 """)
 
 
