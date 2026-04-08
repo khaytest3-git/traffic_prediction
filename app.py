@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import joblib
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -11,6 +12,8 @@ from sklearn.ensemble import GradientBoostingClassifier
 BASE_DIR = Path(__file__).resolve().parent
 DATASET_PATH = BASE_DIR / "traffic_sample.csv"
 LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
+LR_MODEL_PATH = BASE_DIR / "lr_model.joblib"
+GB_MODEL_PATH = BASE_DIR / "gb_model.joblib"
 SEQUENCE_LENGTH = 6
 
 
@@ -34,6 +37,11 @@ def load_data_and_models():
 
     df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
 
+    if LR_MODEL_PATH.exists() and GB_MODEL_PATH.exists():
+        lr_model = joblib.load(LR_MODEL_PATH)
+        gb_model = joblib.load(GB_MODEL_PATH)
+        return df, lr_model, gb_model
+
     X = df[['HOUR', 'DAY_OF_WEEK']]
     y = df['CONGESTION']
 
@@ -46,6 +54,9 @@ def load_data_and_models():
 
     gb_model = GradientBoostingClassifier()
     gb_model.fit(X_train, y_train)
+
+    joblib.dump(lr_model, LR_MODEL_PATH)
+    joblib.dump(gb_model, GB_MODEL_PATH)
 
     return df, lr_model, gb_model
 

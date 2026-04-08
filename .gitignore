@@ -11,6 +11,7 @@ Chicago_Traffic_Tracker_*.csv
 
 # Model outputs (keep lstm_model.h5 at root, ignore duplicates)
 lstm/lstm_model.h5
+*.joblib
 
 # Jupyter
 .ipynb_checkpoints/
