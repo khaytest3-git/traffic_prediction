@@ -3,4 +3,4 @@ pandas
 numpy
 scikit-learn
 matplotlib
-tensorflow==2.18.0
+joblib
