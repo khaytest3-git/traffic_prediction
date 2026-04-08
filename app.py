@@ -10,11 +10,15 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import GradientBoostingClassifier
 
 BASE_DIR = Path(__file__).resolve().parent
-DATASET_PATH = BASE_DIR / "traffic_sample.csv"
 LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
 LR_MODEL_PATH = BASE_DIR / "lr_model.joblib"
 GB_MODEL_PATH = BASE_DIR / "gb_model.joblib"
 SEQUENCE_LENGTH = 6
+
+CANDIDATE_DATASETS = [
+    BASE_DIR / "Chicago_Traffic_Tracker_-_Historical_Congestion_Estimates_by_Segment_-_2024-Current_20260222.csv",
+    BASE_DIR / "traffic_sample.csv",
+]
 
 
 @st.cache_resource
@@ -28,14 +32,20 @@ def load_lstm_model():
         return None
 
 
+def _load_dataframe():
+    for path in CANDIDATE_DATASETS:
+        if path.exists():
+            df = pd.read_csv(path)
+            df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']].dropna()
+            df = df[df['SPEED'] > 0].copy()
+            df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
+            return df
+    raise FileNotFoundError("No dataset found.")
+
+
 @st.cache_resource
 def load_data_and_models():
-    df = pd.read_csv(DATASET_PATH)
-    df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']]
-    df = df.dropna()
-    df = df[df['SPEED'] > 0]
-
-    df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
+    df = _load_dataframe()
 
     if LR_MODEL_PATH.exists() and GB_MODEL_PATH.exists():
         lr_model = joblib.load(LR_MODEL_PATH)
