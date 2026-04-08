@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,16 +8,23 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import GradientBoostingClassifier
 
+BASE_DIR = Path(__file__).resolve().parent
+DATASET_PATH = BASE_DIR / "traffic_sample.csv"
+LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
+SEQUENCE_LENGTH = 6
+
 
 def load_lstm_model():
     try:
         from tensorflow.keras.models import load_model
-        return load_model("lstm_model.h5")
-    except:
+        if not LSTM_MODEL_PATH.exists():
+            return None
+        return load_model(LSTM_MODEL_PATH)
+    except Exception:
         return None
 
 
-df = pd.read_csv("traffic_sample.csv")
+df = pd.read_csv(DATASET_PATH)
 
 df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']]
 df = df.dropna()
@@ -107,13 +116,13 @@ st.subheader("LSTM Prediction (Recent Data Sequence)")
 
 if lstm_model is not None:
     df['SPEED_DELTA'] = df['SPEED'].diff().fillna(0)
-    df['SPEED_ROLLING_MEAN'] = df['SPEED'].rolling(window=3).mean().fillna(method='bfill')
+    df['SPEED_ROLLING_MEAN'] = df['SPEED'].rolling(window=3).mean().bfill()
 
     features = ['SPEED', 'HOUR', 'DAY_OF_WEEK', 'SPEED_DELTA', 'SPEED_ROLLING_MEAN']
 
     sequence_data = df[features].values
-    latest_sequence = sequence_data[-6:]
-    latest_sequence = latest_sequence.reshape(1, 6, len(features))
+    latest_sequence = sequence_data[-SEQUENCE_LENGTH:]
+    latest_sequence = latest_sequence.reshape(1, SEQUENCE_LENGTH, len(features))
 
     lstm_prob = lstm_model.predict(latest_sequence)[0][0]
     lstm_pred = 1 if lstm_prob >= 0.5 else 0
