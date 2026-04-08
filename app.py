@@ -121,7 +121,7 @@ st.subheader("LSTM Prediction (Recent Data Sequence)")
 
 if lstm_model is not None:
     df['SPEED_DELTA'] = df['SPEED'].diff().fillna(0)
-    df['SPEED_ROLLING_MEAN'] = df['SPEED'].rolling(window=3).mean().bfill()
+    df['SPEED_ROLLING_MEAN'] = df['SPEED'].rolling(window=SEQUENCE_LENGTH).mean().bfill()
 
     features = ['SPEED', 'HOUR', 'DAY_OF_WEEK', 'SPEED_DELTA', 'SPEED_ROLLING_MEAN']
 
@@ -158,9 +158,9 @@ st.subheader("About the Model")
 st.write("""
 This dashboard predicts traffic congestion based on temporal patterns.
 
-Logistic Regression and Gradient Boosting use time-based features such as hour and day of week.
+**Logistic Regression** and **Gradient Boosting** predict whether congestion is likely *at the selected hour and day*, using those two features as direct inputs.
 
-LSTM is used to capture sequential patterns from historical traffic data.
+**LSTM** predicts whether congestion will occur in the *next timestep*, using a rolling sequence of the 6 most recent speed readings and derived features (speed delta, rolling mean). These models are not directly comparable — LR/GB reflect current-period patterns, while LSTM forecasts the next period.
 """)
 
 

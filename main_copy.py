@@ -6,16 +6,12 @@ import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
 
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
     confusion_matrix,
     ConfusionMatrixDisplay,
-    precision_score,
-    recall_score,
-    f1_score
 )
 
 # Load dataset
@@ -86,69 +82,3 @@ except:
 
 # Early exit - stop here
 exit()
-
-####
-# Random Forest
-
-rf_model = RandomForestClassifier(
-    n_estimators=10,  # Reduced from 100 to 10 for faster training
-    random_state=42,
-    class_weight='balanced'
-)
-
-rf_model.fit(X_train, y_train)
-
-y_pred_rf = rf_model.predict(X_test)
-
-print("\nRandom Forest Results")
-print("Accuracy:", accuracy_score(y_test, y_pred_rf))
-print(classification_report(y_test, y_pred_rf))
-
-# Confusion Matrix - Random Forest
-cm_rf = confusion_matrix(y_test, y_pred_rf)
-
-disp_rf = ConfusionMatrixDisplay(
-    confusion_matrix=cm_rf,
-    display_labels=["Not Congested", "Congested"]
-)
-disp_rf.plot()
-plt.title("Random Forest Confusion Matrix")
-plt.show()
-
-
-# Model Comparison Table
-precision_log = precision_score(y_test, y_pred_log)
-recall_log = recall_score(y_test, y_pred_log)
-f1_log = f1_score(y_test, y_pred_log)
-
-precision_rf = precision_score(y_test, y_pred_rf)
-recall_rf = recall_score(y_test, y_pred_rf)
-f1_rf = f1_score(y_test, y_pred_rf)
-
-results_df = pd.DataFrame({
-    'Model': ['Logistic Regression', 'Random Forest'],
-    'Accuracy': [
-        accuracy_score(y_test, y_pred_log),
-        accuracy_score(y_test, y_pred_rf)
-    ],
-    'Precision': [precision_log, precision_rf],
-    'Recall': [recall_log, recall_rf],
-    'F1-Score': [f1_log, f1_rf]
-})
-
-print("\nModel Performance Table:")
-print(results_df.round(4))
-
-
-# Feature Importance (Random Forest)
-
-importance = rf_model.feature_importances_
-features = X.columns
-
-importance_df = pd.DataFrame({
-    'Feature': features,
-    'Importance': importance
-}).sort_values(by='Importance', ascending=False)
-
-print("\nFeature Importance:")
-print(importance_df)
