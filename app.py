@@ -204,14 +204,21 @@ st.line_chart(hourly_congestion)
 
 
 st.markdown("---")
-st.subheader("About the Model")
+st.subheader("About the Models")
 
 st.write("""
-This dashboard predicts traffic congestion based on temporal patterns.
+All three models predict the likelihood of traffic congestion based on time patterns learned from historical Chicago traffic data. Congestion is defined as **speed < 20 mph**.
 
-**Logistic Regression** and **Gradient Boosting** predict whether congestion is likely *at the selected hour and day*, using those two features as direct inputs.
+**Logistic Regression**
+Predicts current-period congestion from hour and day of week. Trained with balanced class weights to compensate for the fact that congestion is less common than free-flowing traffic (~20% of records). Tends to give higher probabilities due to this balancing.
 
-**LSTM** predicts whether congestion will occur in the *next timestep*, using a rolling sequence of the 6 most recent speed readings and derived features (speed delta, rolling mean). These models are not directly comparable — LR/GB reflect current-period patterns, while LSTM forecasts the next period.
+**Gradient Boosting**
+Also predicts current-period congestion from hour and day of week. Uses balanced sample weights during training to handle the same class imbalance. Generally more conservative than Logistic Regression.
+
+**LSTM (Long Short-Term Memory)**
+Predicts congestion in the *next timestep* using a sequence of 6 hours leading up to the selected hour. For each hour in the sequence, the model uses the historical average speed for that hour/day combination alongside derived features (speed change and rolling mean). The input is scaled to match the training distribution before prediction.
+
+Because LR/GB predict the *current* period and LSTM predicts the *next* period, their probabilities are not directly comparable.
 """)
 
 
@@ -219,7 +226,15 @@ st.markdown("---")
 st.subheader("Dataset Information")
 
 st.write("""
-The model is trained using historical traffic data from Chicago.
+**Source:** Chicago Traffic Tracker — Historical Congestion Estimates by Segment (2024–present), provided by the City of Chicago.
 
-Congestion is defined based on speed thresholds, but speed is not used as an input feature in the prediction models to ensure meaningful pattern learning.
+**Training data:** 508,166 records after cleaning (speed > 0, no nulls), covering road segments across Chicago with speed readings recorded at regular intervals.
+
+**Features used:**
+- *Hour of day* (0–23)
+- *Day of week* (1 = Monday, 7 = Sunday)
+- *Speed* (used by LSTM only, via historical averages)
+- *Speed delta* and *rolling mean* (LSTM derived features)
+
+**Class balance:** ~19.7% of records are congested. All models apply balancing techniques to avoid defaulting to always predicting "no congestion".
 """)
