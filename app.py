@@ -14,6 +14,7 @@ LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
 SEQUENCE_LENGTH = 6
 
 
+@st.cache_resource
 def load_lstm_model():
     try:
         from tensorflow.keras.models import load_model
@@ -24,27 +25,33 @@ def load_lstm_model():
         return None
 
 
-df = pd.read_csv(DATASET_PATH)
+@st.cache_resource
+def load_data_and_models():
+    df = pd.read_csv(DATASET_PATH)
+    df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']]
+    df = df.dropna()
+    df = df[df['SPEED'] > 0]
 
-df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']]
-df = df.dropna()
-df = df[df['SPEED'] > 0]
+    df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
 
-df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
+    X = df[['HOUR', 'DAY_OF_WEEK']]
+    y = df['CONGESTION']
+
+    X_train, _, y_train, _ = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+
+    lr_model = LogisticRegression(max_iter=1000, class_weight='balanced')
+    lr_model.fit(X_train, y_train)
+
+    gb_model = GradientBoostingClassifier()
+    gb_model.fit(X_train, y_train)
+
+    return df, lr_model, gb_model
 
 
-X = df[['HOUR', 'DAY_OF_WEEK']]
-y = df['CONGESTION']
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
-
-lr_model = LogisticRegression(max_iter=1000, class_weight='balanced')
-lr_model.fit(X_train, y_train)
-
-gb_model = GradientBoostingClassifier()
-gb_model.fit(X_train, y_train)
+df, lr_model, gb_model = load_data_and_models()
+lstm_model = load_lstm_model()
 
 
 st.title("Traffic Congestion Prediction")
@@ -109,8 +116,6 @@ if predict_btn:
         st.success("Low congestion expected (GB)")
 
 
-lstm_model = load_lstm_model()
-
 st.markdown("---")
 st.subheader("LSTM Prediction (Recent Data Sequence)")
 
@@ -167,4 +172,3 @@ The model is trained using historical traffic data from Chicago.
 
 Congestion is defined based on speed thresholds, but speed is not used as an input feature in the prediction models to ensure meaningful pattern learning.
 """)
-
