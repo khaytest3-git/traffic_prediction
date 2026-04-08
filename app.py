@@ -8,6 +8,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.utils.class_weight import compute_sample_weight
 
 BASE_DIR = Path(__file__).resolve().parent
 LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
@@ -63,7 +64,7 @@ def load_data_and_models():
     lr_model.fit(X_train, y_train)
 
     gb_model = GradientBoostingClassifier()
-    gb_model.fit(X_train, y_train)
+    gb_model.fit(X_train, y_train, sample_weight=compute_sample_weight('balanced', y_train))
 
     joblib.dump(lr_model, LR_MODEL_PATH)
     joblib.dump(gb_model, GB_MODEL_PATH)

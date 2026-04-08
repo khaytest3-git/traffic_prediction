@@ -18,6 +18,7 @@ from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_sample_weight
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -68,7 +69,8 @@ def main():
 
     print("Training Gradient Boosting...")
     gb = GradientBoostingClassifier(random_state=42)
-    gb.fit(X_train, y_train)
+    sample_weights = compute_sample_weight('balanced', y_train)
+    gb.fit(X_train, y_train, sample_weight=sample_weights)
     print("Gradient Boosting Results:")
     print(classification_report(y_test, gb.predict(X_test), zero_division=0))
 
