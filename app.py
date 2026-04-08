@@ -12,6 +12,8 @@ from sklearn.utils.class_weight import compute_sample_weight
 
 BASE_DIR = Path(__file__).resolve().parent
 LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
+LSTM_SCALER_PATH = BASE_DIR / "lstm_scaler.joblib"
+LSTM_FEATURES_PATH = BASE_DIR / "lstm_feature_columns.joblib"
 LR_MODEL_PATH = BASE_DIR / "lr_model.joblib"
 GB_MODEL_PATH = BASE_DIR / "gb_model.joblib"
 SEQUENCE_LENGTH = 6
@@ -31,6 +33,37 @@ def load_lstm_model():
         return load_model(LSTM_MODEL_PATH)
     except Exception:
         return None
+
+
+@st.cache_resource
+def load_lstm_assets():
+    if not LSTM_SCALER_PATH.exists() or not LSTM_FEATURES_PATH.exists():
+        return None, None
+    scaler = joblib.load(LSTM_SCALER_PATH)
+    feature_columns = joblib.load(LSTM_FEATURES_PATH)
+    return scaler, feature_columns
+
+
+def build_lstm_sequence(df, hour, day, scaler, feature_columns):
+    speed_lookup = df.groupby(['HOUR', 'DAY_OF_WEEK'])['SPEED'].mean()
+    global_mean_speed = df['SPEED'].mean()
+
+    rows = []
+    for i in range(SEQUENCE_LENGTH):
+        h = (hour - SEQUENCE_LENGTH + 1 + i) % 24
+        speed = speed_lookup.get((h, day), global_mean_speed)
+        row = {'SPEED': speed, 'HOUR': h, 'DAY_OF_WEEK': day}
+        if 'MONTH' in feature_columns:
+            row['MONTH'] = pd.Timestamp.now().month
+        rows.append(row)
+
+    seq_df = pd.DataFrame(rows)
+    seq_df['SPEED_DELTA'] = seq_df['SPEED'].diff().fillna(0)
+    seq_df['SPEED_ROLLING_MEAN'] = seq_df['SPEED'].rolling(window=SEQUENCE_LENGTH, min_periods=1).mean()
+
+    seq_array = seq_df[feature_columns].values
+    seq_scaled = scaler.transform(seq_array)
+    return seq_scaled.reshape(1, SEQUENCE_LENGTH, len(feature_columns))
 
 
 def _load_dataframe():
@@ -139,19 +172,13 @@ if predict_btn:
 
 
 st.markdown("---")
-st.subheader("LSTM Prediction (Recent Data Sequence)")
+st.subheader("LSTM Prediction")
 
-if lstm_model is not None:
-    df['SPEED_DELTA'] = df['SPEED'].diff().fillna(0)
-    df['SPEED_ROLLING_MEAN'] = df['SPEED'].rolling(window=SEQUENCE_LENGTH).mean().bfill()
+lstm_scaler, lstm_feature_columns = load_lstm_assets()
 
-    features = ['SPEED', 'HOUR', 'DAY_OF_WEEK', 'SPEED_DELTA', 'SPEED_ROLLING_MEAN']
-
-    sequence_data = df[features].values
-    latest_sequence = sequence_data[-SEQUENCE_LENGTH:]
-    latest_sequence = latest_sequence.reshape(1, SEQUENCE_LENGTH, len(features))
-
-    lstm_prob = lstm_model.predict(latest_sequence)[0][0]
+if lstm_model is not None and lstm_scaler is not None and predict_btn:
+    sequence = build_lstm_sequence(df, hour, day, lstm_scaler, lstm_feature_columns)
+    lstm_prob = float(lstm_model.predict(sequence, verbose=0)[0][0])
     lstm_pred = 1 if lstm_prob >= 0.5 else 0
 
     st.metric("Congestion Probability (LSTM)", f"{lstm_prob:.2f}")
@@ -161,10 +188,12 @@ if lstm_model is not None:
     else:
         st.success("Low congestion predicted (LSTM)")
 
-    st.caption("LSTM uses historical sequence data")
+    st.caption("LSTM uses a synthetic sequence of the 6 hours leading up to the selected hour, based on historical average speeds.")
 
-else:
+elif lstm_model is None:
     st.warning("LSTM model unavailable in this deployment environment.")
+elif lstm_scaler is None:
+    st.warning("LSTM scaler not found. Re-run lstm_model.py to regenerate lstm_scaler.joblib.")
 
 
 st.markdown("---")

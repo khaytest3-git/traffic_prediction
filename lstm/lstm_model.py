@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, classification_report, f1_score, precision_recall_fscore_support
@@ -184,6 +185,14 @@ def main():
         labels=[1],
         zero_division=0,
     )
+
+    base_dir = Path(__file__).resolve().parent.parent
+    model.save(base_dir / "lstm_model.h5")
+    joblib.dump(scaler, base_dir / "lstm_scaler.joblib")
+    joblib.dump(feature_columns, base_dir / "lstm_feature_columns.joblib")
+    print("Saved: lstm_model.h5")
+    print("Saved: lstm_scaler.joblib")
+    print("Saved: lstm_feature_columns.joblib")
 
     print("\nLSTM Results")
     print("Best threshold:", best_threshold)
