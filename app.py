@@ -11,6 +11,7 @@ from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.utils.class_weight import compute_sample_weight
 
 BASE_DIR = Path(__file__).resolve().parent
+LOOKUP_PATH = BASE_DIR / "chicago_hourly_lookup.csv"
 LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
 LSTM_SCALER_PATH = BASE_DIR / "lstm_scaler.joblib"
 LSTM_FEATURES_PATH = BASE_DIR / "lstm_feature_columns.joblib"
@@ -19,10 +20,10 @@ LR_MODEL_PATH = BASE_DIR / "lr_model.joblib"
 GB_MODEL_PATH = BASE_DIR / "gb_model.joblib"
 SEQUENCE_LENGTH = 6
 
-CANDIDATE_DATASETS = [
-    BASE_DIR / "Chicago_Traffic_Tracker_-_Historical_Congestion_Estimates_by_Segment_-_2024-Current_20260222.csv",
-    BASE_DIR / "traffic_sample.csv",
-]
+
+@st.cache_resource
+def load_lookup():
+    return pd.read_csv(LOOKUP_PATH)
 
 
 @st.cache_resource
@@ -46,17 +47,15 @@ def load_lstm_assets():
     return scaler, feature_columns, threshold
 
 
-def build_lstm_sequence(df, hour, day, scaler, feature_columns):
-    speed_lookup = df.groupby(['HOUR', 'DAY_OF_WEEK'])['SPEED'].mean()
-    global_mean_speed = df['SPEED'].mean()
+def build_lstm_sequence(lookup, hour, day, scaler, feature_columns):
+    speed_lookup = lookup.set_index(['HOUR', 'DAY_OF_WEEK'])['AVG_SPEED']
+    global_mean_speed = lookup['AVG_SPEED'].mean()
 
     rows = []
     for i in range(SEQUENCE_LENGTH):
         h = (hour - SEQUENCE_LENGTH + 1 + i) % 24
         speed = speed_lookup.get((h, day), global_mean_speed)
         row = {'SPEED': speed, 'HOUR': h, 'DAY_OF_WEEK': day}
-        if 'MONTH' in feature_columns:
-            row['MONTH'] = pd.Timestamp.now().month
         rows.append(row)
 
     seq_df = pd.DataFrame(rows)
@@ -68,32 +67,21 @@ def build_lstm_sequence(df, hour, day, scaler, feature_columns):
     return seq_scaled.reshape(1, SEQUENCE_LENGTH, len(feature_columns))
 
 
-def _load_dataframe():
-    for path in CANDIDATE_DATASETS:
-        if path.exists():
-            df = pd.read_csv(path)
-            df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']].dropna()
-            df = df[df['SPEED'] > 0].copy()
-            df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
-            return df
-    raise FileNotFoundError("No dataset found.")
-
-
 @st.cache_resource
-def load_data_and_models():
-    df = _load_dataframe()
-
+def load_models():
     if LR_MODEL_PATH.exists() and GB_MODEL_PATH.exists():
-        lr_model = joblib.load(LR_MODEL_PATH)
-        gb_model = joblib.load(GB_MODEL_PATH)
-        return df, lr_model, gb_model
+        return joblib.load(LR_MODEL_PATH), joblib.load(GB_MODEL_PATH)
+
+    # Fallback: train from traffic_sample.csv if joblib files are missing
+    sample_path = BASE_DIR / "traffic_sample.csv"
+    df = pd.read_csv(sample_path)
+    df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']].dropna()
+    df = df[df['SPEED'] > 0].copy()
+    df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
 
     X = df[['HOUR', 'DAY_OF_WEEK']]
     y = df['CONGESTION']
-
-    X_train, _, y_train, _ = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+    X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
 
     lr_model = LogisticRegression(max_iter=1000, class_weight='balanced')
     lr_model.fit(X_train, y_train)
@@ -104,10 +92,11 @@ def load_data_and_models():
     joblib.dump(lr_model, LR_MODEL_PATH)
     joblib.dump(gb_model, GB_MODEL_PATH)
 
-    return df, lr_model, gb_model
+    return lr_model, gb_model
 
 
-df, lr_model, gb_model = load_data_and_models()
+lookup = load_lookup()
+lr_model, gb_model = load_models()
 lstm_model = load_lstm_model()
 
 
@@ -133,16 +122,12 @@ with col1:
 
 with col2:
     if predict_btn:
-        input_data = pd.DataFrame({
-            'HOUR': [hour],
-            'DAY_OF_WEEK': [day]
-        })
+        input_data = pd.DataFrame({'HOUR': [hour], 'DAY_OF_WEEK': [day]})
 
         prediction = lr_model.predict(input_data)[0]
         probability = lr_model.predict_proba(input_data)[0][1]
 
         st.caption("Logistic Regression")
-
         st.metric("Congestion Probability (LR)", f"{probability:.2f}")
 
         if prediction == 1:
@@ -155,16 +140,12 @@ st.markdown("---")
 st.subheader("Gradient Boosting Prediction")
 
 if predict_btn:
-    input_data = pd.DataFrame({
-        'HOUR': [hour],
-        'DAY_OF_WEEK': [day]
-    })
+    input_data = pd.DataFrame({'HOUR': [hour], 'DAY_OF_WEEK': [day]})
 
     gb_prediction = gb_model.predict(input_data)[0]
     gb_probability = gb_model.predict_proba(input_data)[0][1]
 
     st.caption("Gradient Boosting")
-
     st.metric("Congestion Probability (GB)", f"{gb_probability:.2f}")
 
     if gb_prediction == 1:
@@ -179,7 +160,7 @@ st.subheader("LSTM Prediction")
 lstm_scaler, lstm_feature_columns, lstm_threshold = load_lstm_assets()
 
 if lstm_model is not None and lstm_scaler is not None and predict_btn:
-    sequence = build_lstm_sequence(df, hour, day, lstm_scaler, lstm_feature_columns)
+    sequence = build_lstm_sequence(lookup, hour, day, lstm_scaler, lstm_feature_columns)
     lstm_prob = float(lstm_model.predict(sequence, verbose=0)[0][0])
     lstm_pred = 1 if lstm_prob >= 0.5 else 0
 
@@ -202,7 +183,7 @@ elif lstm_scaler is None:
 st.markdown("---")
 st.subheader("Congestion Pattern by Hour")
 
-hourly_congestion = df.groupby('HOUR')['CONGESTION'].mean()
+hourly_congestion = lookup.groupby('HOUR')['CONGESTION_RATE'].mean()
 st.line_chart(hourly_congestion)
 
 
