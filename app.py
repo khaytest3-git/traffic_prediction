@@ -5,9 +5,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.neural_network import MLPClassifier
 from sklearn.utils.class_weight import compute_sample_weight
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -16,8 +17,11 @@ LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
 LSTM_SCALER_PATH = BASE_DIR / "lstm_scaler.joblib"
 LSTM_FEATURES_PATH = BASE_DIR / "lstm_feature_columns.joblib"
 LSTM_THRESHOLD_PATH = BASE_DIR / "lstm_threshold.joblib"
-LR_MODEL_PATH = BASE_DIR / "lr_model.joblib"
-GB_MODEL_PATH = BASE_DIR / "gb_model.joblib"
+LR_MODEL_PATH  = BASE_DIR / "lr_model.joblib"
+GB_MODEL_PATH  = BASE_DIR / "gb_model.joblib"
+RF_MODEL_PATH  = BASE_DIR / "rf_model.joblib"
+MLP_MODEL_PATH = BASE_DIR / "mlp_model.joblib"
+SVM_MODEL_PATH = BASE_DIR / "svm_model.joblib"
 SEQUENCE_LENGTH = 6
 
 
@@ -69,8 +73,9 @@ def build_lstm_sequence(lookup, hour, day, scaler, feature_columns):
 
 @st.cache_resource
 def load_models():
-    if LR_MODEL_PATH.exists() and GB_MODEL_PATH.exists():
-        return joblib.load(LR_MODEL_PATH), joblib.load(GB_MODEL_PATH)
+    paths = [LR_MODEL_PATH, GB_MODEL_PATH, RF_MODEL_PATH, MLP_MODEL_PATH, SVM_MODEL_PATH]
+    if all(p.exists() for p in paths):
+        return tuple(joblib.load(p) for p in paths)
 
     # Fallback: train from traffic_sample.csv if joblib files are missing
     sample_path = BASE_DIR / "traffic_sample.csv"
@@ -82,21 +87,37 @@ def load_models():
     X = df[['HOUR', 'DAY_OF_WEEK']]
     y = df['CONGESTION']
     X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
+    weights = compute_sample_weight('balanced', y_train)
 
-    lr_model = LogisticRegression(max_iter=1000, class_weight='balanced')
-    lr_model.fit(X_train, y_train)
+    lr  = LogisticRegression(max_iter=1000, class_weight='balanced')
+    lr.fit(X_train, y_train)
 
-    gb_model = GradientBoostingClassifier()
-    gb_model.fit(X_train, y_train, sample_weight=compute_sample_weight('balanced', y_train))
+    gb  = GradientBoostingClassifier()
+    gb.fit(X_train, y_train, sample_weight=weights)
 
-    joblib.dump(lr_model, LR_MODEL_PATH)
-    joblib.dump(gb_model, GB_MODEL_PATH)
+    rf  = RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42)
+    rf.fit(X_train, y_train)
 
-    return lr_model, gb_model
+    pos_idx = np.where(y_train.values == 1)[0]
+    neg_idx = np.where(y_train.values == 0)[0]
+    rng = np.random.default_rng(42)
+    extra = rng.choice(pos_idx, size=len(neg_idx) - len(pos_idx), replace=True)
+    bal_idx = np.concatenate([np.arange(len(y_train)), extra])
+    rng.shuffle(bal_idx)
+    mlp = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=300, random_state=42)
+    mlp.fit(X_train.iloc[bal_idx], y_train.iloc[bal_idx])
+
+    svm = SGDClassifier(loss='modified_huber', class_weight='balanced', max_iter=1000, random_state=42)
+    svm.fit(X_train, y_train)
+
+    for model, path in zip([lr, gb, rf, mlp, svm], paths):
+        joblib.dump(model, path)
+
+    return lr, gb, rf, mlp, svm
 
 
 lookup = load_lookup()
-lr_model, gb_model = load_models()
+lr_model, gb_model, rf_model, mlp_model, svm_model = load_models()
 lstm_model = load_lstm_model()
 
 
@@ -155,6 +176,54 @@ if predict_btn:
 
 
 st.markdown("---")
+st.subheader("Random Forest Prediction")
+
+if predict_btn:
+    input_data = pd.DataFrame({'HOUR': [hour], 'DAY_OF_WEEK': [day]})
+    rf_prediction = rf_model.predict(input_data)[0]
+    rf_probability = rf_model.predict_proba(input_data)[0][1]
+
+    st.caption("Random Forest")
+    st.metric("Congestion Probability (RF)", f"{rf_probability:.2f}")
+    if rf_prediction == 1:
+        st.error("High congestion expected (RF)")
+    else:
+        st.success("Low congestion expected (RF)")
+
+
+st.markdown("---")
+st.subheader("MLP Neural Network Prediction")
+
+if predict_btn:
+    input_data = pd.DataFrame({'HOUR': [hour], 'DAY_OF_WEEK': [day]})
+    mlp_prediction = mlp_model.predict(input_data)[0]
+    mlp_probability = mlp_model.predict_proba(input_data)[0][1]
+
+    st.caption("MLP Neural Network")
+    st.metric("Congestion Probability (MLP)", f"{mlp_probability:.2f}")
+    if mlp_prediction == 1:
+        st.error("High congestion expected (MLP)")
+    else:
+        st.success("Low congestion expected (MLP)")
+
+
+st.markdown("---")
+st.subheader("SVM Prediction")
+
+if predict_btn:
+    input_data = pd.DataFrame({'HOUR': [hour], 'DAY_OF_WEEK': [day]})
+    svm_prediction = svm_model.predict(input_data)[0]
+    svm_probability = svm_model.predict_proba(input_data)[0][1]
+
+    st.caption("Support Vector Machine (Linear)")
+    st.metric("Congestion Probability (SVM)", f"{svm_probability:.2f}")
+    if svm_prediction == 1:
+        st.error("High congestion expected (SVM)")
+    else:
+        st.success("Low congestion expected (SVM)")
+
+
+st.markdown("---")
 st.subheader("LSTM Prediction")
 
 lstm_scaler, lstm_feature_columns, lstm_threshold = load_lstm_assets()
@@ -191,13 +260,22 @@ st.markdown("---")
 st.subheader("About the Models")
 
 st.write("""
-All three models predict the likelihood of traffic congestion based on time patterns learned from historical Chicago traffic data. Congestion is defined as **speed < 20 mph**.
+All models predict the likelihood of traffic congestion based on time patterns learned from historical Chicago traffic data. Congestion is defined as **speed < 20 mph**.
 
 **Logistic Regression**
-Predicts current-period congestion from hour and day of week. Trained with balanced class weights to compensate for the fact that congestion is less common than free-flowing traffic (~20% of records). Tends to give higher probabilities due to this balancing.
+A linear classifier that finds the best decision boundary between congested and non-congested hours. Trained with balanced class weights. Tends to give higher probabilities due to this balancing.
 
 **Gradient Boosting**
-Also predicts current-period congestion from hour and day of week. Uses balanced sample weights during training to handle the same class imbalance. Generally more conservative than Logistic Regression.
+An ensemble of decision trees trained sequentially, each correcting the errors of the previous. Uses balanced sample weights. Generally more conservative than Logistic Regression.
+
+**Random Forest**
+An ensemble of independently trained decision trees that vote on the final prediction. Uses balanced class weights and benefits from averaging across 100 trees, reducing overfitting.
+
+**MLP Neural Network**
+A feedforward neural network with two hidden layers (64 and 32 neurons). Captures non-linear relationships between time features and congestion. Uses balanced sample weights during training.
+
+**SVM (Support Vector Machine)**
+Finds the maximum-margin decision boundary between congested and non-congested classes. Uses a linear kernel via SGDClassifier (stochastic gradient descent with modified Huber loss), which scales efficiently to large datasets and supports native probability estimates and class balancing.
 
 **LSTM (Long Short-Term Memory)**
 Trained on a city-wide weekly traffic profile — the average speed across all Chicago road segments for each hour of the week. This gives the LSTM a genuine temporal sequence to learn from (how Monday morning rush connects to the afternoon, how Friday evening transitions, etc.) rather than mixing unrelated road segments.
