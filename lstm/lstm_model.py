@@ -14,8 +14,7 @@ SEQUENCE_LENGTH = 6
 TRAIN_SPLIT = 0.8
 VALIDATION_SPLIT = 0.1
 EPOCHS = 12
-BATCH_SIZE = 64
-MAX_ROWS = 80000
+BATCH_SIZE = 32
 
 
 def load_dataset():
@@ -35,19 +34,40 @@ def load_dataset():
 
 
 def prepare_dataframe(df):
-    base_columns = ["SPEED"]
-    optional_columns = [column for column in ["HOUR", "DAY_OF_WEEK", "MONTH"] if column in df.columns]
-    required_columns = base_columns + optional_columns
+    """
+    Aggregate all segment readings into a city-wide weekly traffic profile.
 
-    clean_df = df[required_columns].dropna().copy()
-    clean_df = clean_df[clean_df["SPEED"] > 0]
-    clean_df["SPEED_DELTA"] = clean_df["SPEED"].diff().fillna(0)
-    clean_df["SPEED_ROLLING_MEAN"] = clean_df["SPEED"].rolling(window=SEQUENCE_LENGTH, min_periods=1).mean()
-    clean_df["FUTURE_CONGESTION"] = (clean_df["SPEED"].shift(-1) < 20).astype(int)
-    clean_df = clean_df.iloc[:-1]
-    if len(clean_df) > MAX_ROWS:
-        clean_df = clean_df.tail(MAX_ROWS)
-    return clean_df.reset_index(drop=True)
+    Each row in the output represents the average speed across all road
+    segments for a given (DAY_OF_WEEK, HOUR) combination, sorted
+    chronologically through the week. This gives the LSTM a genuine
+    temporal sequence to learn from rather than mixing unrelated segments.
+    """
+    clean_df = df[["SPEED", "HOUR", "DAY_OF_WEEK"]].dropna()
+    clean_df = clean_df[clean_df["SPEED"] > 0].copy()
+
+    profile = (
+        clean_df.groupby(["DAY_OF_WEEK", "HOUR"])["SPEED"]
+        .mean()
+        .reset_index()
+        .sort_values(["DAY_OF_WEEK", "HOUR"])
+        .reset_index(drop=True)
+    )
+
+    profile["SPEED_DELTA"] = profile["SPEED"].diff().fillna(0)
+    profile["SPEED_ROLLING_MEAN"] = profile["SPEED"].rolling(window=SEQUENCE_LENGTH, min_periods=1).mean()
+
+    # City-wide averages never drop below 20 mph (individual congested segments
+    # get diluted by hundreds of free-flowing ones). Use the 20th percentile of
+    # city-wide average speeds as the congestion threshold instead, which
+    # preserves a ~20% congestion rate consistent with the per-segment data.
+    congestion_threshold = profile["SPEED"].quantile(0.20)
+    profile["FUTURE_CONGESTION"] = (profile["SPEED"].shift(-1) < congestion_threshold).astype(int)
+    profile = profile.iloc[:-1]
+
+    congestion_rate = profile["FUTURE_CONGESTION"].mean()
+    print(f"Weekly profile: {len(profile)} time slots across {profile['DAY_OF_WEEK'].nunique()} days")
+    print(f"Congestion threshold: {congestion_threshold:.1f} mph (20th percentile), rate: {congestion_rate:.1%}")
+    return profile.reset_index(drop=True), congestion_threshold
 
 
 def build_sequences(feature_array, target_array, sequence_length):
@@ -112,14 +132,14 @@ def find_best_threshold(y_true, y_prob):
 
 
 def main():
-    df = prepare_dataframe(load_dataset())
+    df, congestion_threshold = prepare_dataframe(load_dataset())
 
     feature_columns = [column for column in df.columns if column != "FUTURE_CONGESTION"]
     X = df[feature_columns].values
     y = df["FUTURE_CONGESTION"].values
 
     split_index = int(len(df) * TRAIN_SPLIT)
-    if split_index <= SEQUENCE_LENGTH or len(df) - split_index <= 1:
+    if split_index <= SEQUENCE_LENGTH or len(df) - split_index <= SEQUENCE_LENGTH:
         raise ValueError("Dataset is too small for the configured sequence length and train/test split.")
 
     scaler = MinMaxScaler()
@@ -190,9 +210,11 @@ def main():
     model.save(base_dir / "lstm_model.h5")
     joblib.dump(scaler, base_dir / "lstm_scaler.joblib")
     joblib.dump(feature_columns, base_dir / "lstm_feature_columns.joblib")
+    joblib.dump(float(congestion_threshold), base_dir / "lstm_threshold.joblib")
     print("Saved: lstm_model.h5")
     print("Saved: lstm_scaler.joblib")
     print("Saved: lstm_feature_columns.joblib")
+    print("Saved: lstm_threshold.joblib")
 
     print("\nLSTM Results")
     print("Best threshold:", best_threshold)

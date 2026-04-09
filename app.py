@@ -14,6 +14,7 @@ BASE_DIR = Path(__file__).resolve().parent
 LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
 LSTM_SCALER_PATH = BASE_DIR / "lstm_scaler.joblib"
 LSTM_FEATURES_PATH = BASE_DIR / "lstm_feature_columns.joblib"
+LSTM_THRESHOLD_PATH = BASE_DIR / "lstm_threshold.joblib"
 LR_MODEL_PATH = BASE_DIR / "lr_model.joblib"
 GB_MODEL_PATH = BASE_DIR / "gb_model.joblib"
 SEQUENCE_LENGTH = 6
@@ -38,10 +39,11 @@ def load_lstm_model():
 @st.cache_resource
 def load_lstm_assets():
     if not LSTM_SCALER_PATH.exists() or not LSTM_FEATURES_PATH.exists():
-        return None, None
+        return None, None, None
     scaler = joblib.load(LSTM_SCALER_PATH)
     feature_columns = joblib.load(LSTM_FEATURES_PATH)
-    return scaler, feature_columns
+    threshold = joblib.load(LSTM_THRESHOLD_PATH) if LSTM_THRESHOLD_PATH.exists() else 20.0
+    return scaler, feature_columns, threshold
 
 
 def build_lstm_sequence(df, hour, day, scaler, feature_columns):
@@ -174,7 +176,7 @@ if predict_btn:
 st.markdown("---")
 st.subheader("LSTM Prediction")
 
-lstm_scaler, lstm_feature_columns = load_lstm_assets()
+lstm_scaler, lstm_feature_columns, lstm_threshold = load_lstm_assets()
 
 if lstm_model is not None and lstm_scaler is not None and predict_btn:
     sequence = build_lstm_sequence(df, hour, day, lstm_scaler, lstm_feature_columns)
@@ -184,11 +186,12 @@ if lstm_model is not None and lstm_scaler is not None and predict_btn:
     st.metric("Congestion Probability (LSTM)", f"{lstm_prob:.2f}")
 
     if lstm_pred == 1:
-        st.error("High congestion predicted (LSTM)")
+        st.error("Below-average city speed predicted (LSTM)")
     else:
-        st.success("Low congestion predicted (LSTM)")
+        st.success("Normal city speed predicted (LSTM)")
 
-    st.caption("LSTM uses a synthetic sequence of the 6 hours leading up to the selected hour, based on historical average speeds.")
+    if lstm_threshold is not None:
+        st.caption(f"LSTM predicts whether the next hour's city-wide average speed will fall below {lstm_threshold:.1f} mph (slowest 20% of hours). Uses the 6 hours leading up to the selected time.")
 
 elif lstm_model is None:
     st.warning("LSTM model unavailable in this deployment environment.")
@@ -216,9 +219,11 @@ Predicts current-period congestion from hour and day of week. Trained with balan
 Also predicts current-period congestion from hour and day of week. Uses balanced sample weights during training to handle the same class imbalance. Generally more conservative than Logistic Regression.
 
 **LSTM (Long Short-Term Memory)**
-Predicts congestion in the *next timestep* using a sequence of 6 hours leading up to the selected hour. For each hour in the sequence, the model uses the historical average speed for that hour/day combination alongside derived features (speed change and rolling mean). The input is scaled to match the training distribution before prediction.
+Trained on a city-wide weekly traffic profile — the average speed across all Chicago road segments for each hour of the week. This gives the LSTM a genuine temporal sequence to learn from (how Monday morning rush connects to the afternoon, how Friday evening transitions, etc.) rather than mixing unrelated road segments.
 
-Because LR/GB predict the *current* period and LSTM predicts the *next* period, their probabilities are not directly comparable.
+At prediction time, a 6-hour sequence is built using historical average speeds for the hours leading up to the selected time, scaled to match training, and passed to the model. The LSTM predicts whether the *next* hour's city-wide average speed will be in the slowest 20% of hours.
+
+Because city-wide averages rarely drop below the 20 mph per-segment threshold, the LSTM uses a relative congestion definition (slowest 20th percentile) rather than the fixed threshold used by LR and GB. Their probabilities reflect different scales and are not directly comparable.
 """)
 
 
