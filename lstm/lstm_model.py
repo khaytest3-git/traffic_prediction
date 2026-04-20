@@ -1,3 +1,15 @@
+"""
+Train LSTM and GRU models on per-segment sequences from the Chicago Traffic dataset.
+
+Run this locally before deploying:
+    python lstm/lstm_model.py
+
+Outputs (saved to project root):
+    lstm_model.h5, gru_model.h5
+    lstm_scaler.joblib, lstm_feature_columns.joblib
+    lstm_threshold.joblib, lstm_best_threshold.joblib, gru_threshold.joblib
+"""
+
 from pathlib import Path
 
 import joblib
@@ -10,265 +22,205 @@ from tensorflow.keras.layers import Dropout, Input, LSTM, GRU, Dense
 from tensorflow.keras.models import Sequential
 
 
-SEQUENCE_LENGTH = 6
-TRAIN_SPLIT = 0.8
+SEQUENCE_LENGTH  = 6
+TRAIN_SPLIT      = 0.8
 VALIDATION_SPLIT = 0.1
-EPOCHS = 12
-BATCH_SIZE = 32
+EPOCHS           = 20
+BATCH_SIZE       = 128
+CONGESTION_SPEED = 20.0
+
+FEATURE_COLS = ['SPEED', 'HOUR', 'DAY_OF_WEEK', 'SPEED_DELTA', 'SPEED_ROLLING_MEAN']
 
 
 def load_dataset():
     base_dir = Path(__file__).resolve().parent.parent
-    candidate_files = [
+    candidates = [
         base_dir / "Chicago_Traffic_Tracker_-_Historical_Congestion_Estimates_by_Segment_-_2024-Current_20260222.csv",
         base_dir / "traffic_sample.csv",
     ]
-
-    for csv_path in candidate_files:
-        if csv_path.exists():
-            df = pd.read_csv(csv_path)
-            print(f"Loaded dataset: {csv_path.name}")
-            return df
-
-    raise FileNotFoundError("No traffic dataset was found in the project root.")
+    for path in candidates:
+        if path.exists():
+            print(f"Loaded dataset: {path.name} ({path.stat().st_size // 1_000_000} MB)")
+            return pd.read_csv(path)
+    raise FileNotFoundError("No traffic dataset found.")
 
 
-def prepare_dataframe(df):
-    """
-    Aggregate all segment readings into a city-wide weekly traffic profile.
+def prepare_segments(df):
+    """Build per-segment feature/target arrays sorted chronologically."""
+    df = df[['SEGMENT_ID', 'TIME', 'SPEED', 'HOUR', 'DAY_OF_WEEK']].dropna()
+    df = df[df['SPEED'] > 0].copy()
 
-    Each row in the output represents the average speed across all road
-    segments for a given (DAY_OF_WEEK, HOUR) combination, sorted
-    chronologically through the week. This gives the LSTM a genuine
-    temporal sequence to learn from rather than mixing unrelated segments.
-    """
-    clean_df = df[["SPEED", "HOUR", "DAY_OF_WEEK"]].dropna()
-    clean_df = clean_df[clean_df["SPEED"] > 0].copy()
+    segments = []
+    for _, group in df.groupby('SEGMENT_ID'):
+        group = group.sort_values('TIME').reset_index(drop=True)
+        if len(group) < SEQUENCE_LENGTH + 2:
+            continue
+        group['SPEED_DELTA']        = group['SPEED'].diff().fillna(0)
+        group['SPEED_ROLLING_MEAN'] = group['SPEED'].rolling(window=SEQUENCE_LENGTH, min_periods=1).mean()
+        group['CONGESTION']         = (group['SPEED'] < CONGESTION_SPEED).astype(int)
+        split = int(len(group) * TRAIN_SPLIT)
+        segments.append({
+            'features': group[FEATURE_COLS].values.astype(np.float32),
+            'targets':  group['CONGESTION'].values,
+            'split':    split,
+        })
+    return segments
 
-    profile = (
-        clean_df.groupby(["DAY_OF_WEEK", "HOUR"])["SPEED"]
-        .mean()
-        .reset_index()
-        .sort_values(["DAY_OF_WEEK", "HOUR"])
-        .reset_index(drop=True)
+
+def build_sequences_and_scaler(segments):
+    """Fit scaler on training rows only, then build train/test sequences."""
+    train_rows = np.vstack([s['features'][:s['split']] for s in segments])
+    scaler = MinMaxScaler()
+    scaler.fit(train_rows)
+
+    X_train, y_train, X_test, y_test = [], [], [], []
+
+    for s in segments:
+        scaled  = scaler.transform(s['features'])
+        targets = s['targets']
+        split   = s['split']
+        n       = len(scaled)
+
+        for i in range(SEQUENCE_LENGTH, split):
+            X_train.append(scaled[i - SEQUENCE_LENGTH:i])
+            y_train.append(targets[i])
+
+        for i in range(split, n):
+            X_test.append(scaled[i - SEQUENCE_LENGTH:i])
+            y_test.append(targets[i])
+
+    return (
+        np.array(X_train, dtype=np.float32), np.array(y_train, dtype=np.int32),
+        np.array(X_test,  dtype=np.float32), np.array(y_test,  dtype=np.int32),
+        scaler,
     )
 
-    profile["SPEED_DELTA"] = profile["SPEED"].diff().fillna(0)
-    profile["SPEED_ROLLING_MEAN"] = profile["SPEED"].rolling(window=SEQUENCE_LENGTH, min_periods=1).mean()
 
-    # City-wide averages never drop below 20 mph (individual congested segments
-    # get diluted by hundreds of free-flowing ones). Use the 20th percentile of
-    # city-wide average speeds as the congestion threshold instead, which
-    # preserves a ~20% congestion rate consistent with the per-segment data.
-    congestion_threshold = profile["SPEED"].quantile(0.20)
-    profile["FUTURE_CONGESTION"] = (profile["SPEED"].shift(-1) < congestion_threshold).astype(int)
-    profile = profile.iloc[:-1]
-
-    congestion_rate = profile["FUTURE_CONGESTION"].mean()
-    print(f"Weekly profile: {len(profile)} time slots across {profile['DAY_OF_WEEK'].nunique()} days")
-    print(f"Congestion threshold: {congestion_threshold:.1f} mph (20th percentile), rate: {congestion_rate:.1%}")
-    return profile.reset_index(drop=True), congestion_threshold
-
-
-def build_sequences(feature_array, target_array, sequence_length):
-    X_sequences = []
-    y_sequences = []
-
-    for index in range(sequence_length, len(feature_array)):
-        X_sequences.append(feature_array[index - sequence_length:index])
-        y_sequences.append(target_array[index])
-
-    return np.array(X_sequences), np.array(y_sequences)
-
-
-def compute_class_weights(target_array):
-    class_counts = np.bincount(target_array)
-    total = len(target_array)
+def compute_class_weights(y):
+    counts = np.bincount(y)
+    total  = len(y)
     return {
-        label: np.sqrt(total / (len(class_counts) * count))
-        for label, count in enumerate(class_counts)
-        if count > 0
+        label: np.sqrt(total / (len(counts) * count))
+        for label, count in enumerate(counts) if count > 0
     }
 
 
-def oversample_sequences(X_array, y_array, target_positive_ratio=0.28, random_state=42):
+def oversample_sequences(X, y, target_positive_ratio=0.28, random_state=42):
     rng = np.random.default_rng(random_state)
-    positive_indices = np.where(y_array == 1)[0]
-    negative_indices = np.where(y_array == 0)[0]
-
-    if len(positive_indices) == 0 or len(negative_indices) == 0:
-        return X_array, y_array
-
-    current_positive_ratio = len(positive_indices) / len(y_array)
-    if current_positive_ratio >= target_positive_ratio:
-        return X_array, y_array
-
-    target_positive_count = int((target_positive_ratio * len(negative_indices)) / (1 - target_positive_ratio))
-    additional_count = max(0, target_positive_count - len(positive_indices))
-    if additional_count == 0:
-        return X_array, y_array
-
-    sampled_positive_indices = rng.choice(positive_indices, size=additional_count, replace=True)
-    combined_indices = np.concatenate([negative_indices, positive_indices, sampled_positive_indices])
-    rng.shuffle(combined_indices)
-    return X_array[combined_indices], y_array[combined_indices]
+    pos = np.where(y == 1)[0]
+    neg = np.where(y == 0)[0]
+    if len(pos) == 0 or len(neg) == 0 or len(pos) / len(y) >= target_positive_ratio:
+        return X, y
+    target_pos  = int(target_positive_ratio * len(neg) / (1 - target_positive_ratio))
+    extra       = rng.choice(pos, size=max(0, target_pos - len(pos)), replace=True)
+    idx         = np.concatenate([neg, pos, extra])
+    rng.shuffle(idx)
+    return X[idx], y[idx]
 
 
 def find_best_threshold(y_true, y_prob):
-    best_threshold = 0.5
-    best_score = -1.0
-    best_accuracy = -1.0
+    best_t, best_f1, best_acc = 0.5, -1.0, -1.0
+    for t in np.arange(0.30, 0.71, 0.05):
+        pred    = (y_prob >= t).astype(int)
+        score   = f1_score(y_true, pred, zero_division=0)
+        acc     = accuracy_score(y_true, pred)
+        if score > best_f1 or (np.isclose(score, best_f1) and acc > best_acc):
+            best_t, best_f1, best_acc = float(t), score, acc
+    return best_t, best_f1
 
-    for threshold in np.arange(0.35, 0.71, 0.05):
-        y_pred = (y_prob >= threshold).astype(int)
-        score = f1_score(y_true, y_pred, zero_division=0)
-        accuracy = accuracy_score(y_true, y_pred)
-        if score > best_score or (np.isclose(score, best_score) and accuracy > best_accuracy):
-            best_score = score
-            best_threshold = float(threshold)
-            best_accuracy = accuracy
 
-    return best_threshold, best_score
+def train_model(model, X_train, y_train, X_val, y_val, class_weights):
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    model.fit(
+        X_train, y_train,
+        epochs=EPOCHS,
+        batch_size=BATCH_SIZE,
+        validation_data=(X_val, y_val),
+        class_weight=class_weights,
+        callbacks=[EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)],
+        verbose=2,
+    )
+    return model
+
+
+def evaluate(name, model, X_val, y_val, X_test, y_test):
+    val_prob  = model.predict(X_val,  verbose=0).ravel()
+    threshold, val_f1 = find_best_threshold(y_val, val_prob)
+
+    test_prob = model.predict(X_test, verbose=0).ravel()
+    test_pred = (test_prob >= threshold).astype(int)
+
+    p, r, f, _ = precision_recall_fscore_support(y_test, test_pred, labels=[1], zero_division=0)
+    print(f"\n{name} Results  (threshold={threshold:.2f})")
+    print(f"  Val F1: {val_f1:.4f}")
+    print(f"  Test Accuracy : {accuracy_score(y_test, test_pred):.4f}")
+    print(f"  Congestion  P : {float(p[0]):.4f}  R : {float(r[0]):.4f}  F1 : {float(f[0]):.4f}")
+    print(classification_report(y_test, test_pred, zero_division=0))
+    return threshold
 
 
 def main():
-    df, congestion_threshold = prepare_dataframe(load_dataset())
+    df = load_dataset()
 
-    feature_columns = [column for column in df.columns if column != "FUTURE_CONGESTION"]
-    X = df[feature_columns].values
-    y = df["FUTURE_CONGESTION"].values
+    print("\nPreparing per-segment sequences...")
+    segments = prepare_segments(df)
+    print(f"Usable segments : {len(segments)}")
 
-    split_index = int(len(df) * TRAIN_SPLIT)
-    if split_index <= SEQUENCE_LENGTH or len(df) - split_index <= SEQUENCE_LENGTH:
-        raise ValueError("Dataset is too small for the configured sequence length and train/test split.")
+    X_train, y_train, X_test, y_test, scaler = build_sequences_and_scaler(segments)
+    print(f"Train sequences : {len(X_train):,}")
+    print(f"Test  sequences : {len(X_test):,}")
+    print(f"Congestion rate : {y_train.mean():.1%}\n")
 
-    scaler = MinMaxScaler()
-    X_train_scaled = scaler.fit_transform(X[:split_index])
-    X_test_scaled = scaler.transform(X[split_index - SEQUENCE_LENGTH:])
+    val_size      = max(1, int(len(X_train) * VALIDATION_SPLIT))
+    X_val         = X_train[-val_size:]
+    y_val         = y_train[-val_size:]
+    X_train_final = X_train[:-val_size]
+    y_train_final = y_train[:-val_size]
 
-    y_train = y[:split_index]
-    y_test = y[split_index - SEQUENCE_LENGTH:]
+    X_bal, y_bal  = oversample_sequences(X_train_final, y_train_final)
+    cw            = compute_class_weights(y_train_final)
+    cw[1]         = min(cw.get(1, 1.0), 1.5)
 
-    X_train_seq, y_train_seq = build_sequences(X_train_scaled, y_train, SEQUENCE_LENGTH)
-    X_test_seq, y_test_seq = build_sequences(X_test_scaled, y_test, SEQUENCE_LENGTH)
+    n_features = len(FEATURE_COLS)
+    base_dir   = Path(__file__).resolve().parent.parent
 
-    validation_size = max(1, int(len(X_train_seq) * VALIDATION_SPLIT))
-    if validation_size >= len(X_train_seq):
-        raise ValueError("Training data is too small for the configured validation split.")
-
-    X_train_final = X_train_seq[:-validation_size]
-    y_train_final = y_train_seq[:-validation_size]
-    X_val = X_train_seq[-validation_size:]
-    y_val = y_train_seq[-validation_size:]
-
-    X_train_balanced, y_train_balanced = oversample_sequences(X_train_final, y_train_final)
-    class_weights = compute_class_weights(y_train_final)
-    class_weights[1] = min(class_weights.get(1, 1.0), 1.5)
-
-    model = Sequential([
-        Input(shape=(SEQUENCE_LENGTH, len(feature_columns))),
+    # --- LSTM ---
+    print("Training LSTM...")
+    lstm = Sequential([
+        Input(shape=(SEQUENCE_LENGTH, n_features)),
         LSTM(64, return_sequences=True),
         Dropout(0.2),
         LSTM(32),
-        Dense(16, activation="relu"),
+        Dense(16, activation='relu'),
         Dropout(0.2),
-        Dense(1, activation="sigmoid"),
+        Dense(1, activation='sigmoid'),
     ])
+    lstm = train_model(lstm, X_bal, y_bal, X_val, y_val, cw)
+    lstm_threshold = evaluate('LSTM', lstm, X_val, y_val, X_test, y_test)
 
-    model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+    lstm.save(base_dir / 'lstm_model.h5')
+    joblib.dump(scaler,       base_dir / 'lstm_scaler.joblib')
+    joblib.dump(FEATURE_COLS, base_dir / 'lstm_feature_columns.joblib')
+    joblib.dump(CONGESTION_SPEED,  base_dir / 'lstm_threshold.joblib')
+    joblib.dump(lstm_threshold,    base_dir / 'lstm_best_threshold.joblib')
+    print("Saved: lstm_model.h5  lstm_scaler.joblib  lstm_best_threshold.joblib")
 
-    early_stopping = EarlyStopping(
-        monitor="val_loss",
-        patience=2,
-        restore_best_weights=True,
-    )
-
-    model.fit(
-        X_train_balanced,
-        y_train_balanced,
-        epochs=EPOCHS,
-        batch_size=BATCH_SIZE,
-        validation_data=(X_val, y_val),
-        class_weight=class_weights,
-        callbacks=[early_stopping],
-        verbose=2,
-    )
-
-    val_prob = model.predict(X_val, verbose=0).ravel()
-    best_threshold, best_f1 = find_best_threshold(y_val, val_prob)
-
-    y_prob = model.predict(X_test_seq, verbose=0).ravel()
-    y_pred = (y_prob >= best_threshold).astype(int)
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        y_test_seq,
-        y_pred,
-        labels=[1],
-        zero_division=0,
-    )
-
-    base_dir = Path(__file__).resolve().parent.parent
-    model.save(base_dir / "lstm_model.h5")
-    joblib.dump(scaler, base_dir / "lstm_scaler.joblib")
-    joblib.dump(feature_columns, base_dir / "lstm_feature_columns.joblib")
-    joblib.dump(float(congestion_threshold), base_dir / "lstm_threshold.joblib")
-    print("Saved: lstm_model.h5")
-    print("Saved: lstm_scaler.joblib")
-    print("Saved: lstm_feature_columns.joblib")
-    print("Saved: lstm_threshold.joblib")
-
-    print("\nLSTM Results")
-    print("Best threshold:", best_threshold)
-    print("Validation F1:", round(best_f1, 4))
-    print("Accuracy:", accuracy_score(y_test_seq, y_pred))
-    print("Congestion Precision:", round(float(precision[0]), 4))
-    print("Congestion Recall:", round(float(recall[0]), 4))
-    print("Congestion F1:", round(float(f1[0]), 4))
-    print(classification_report(y_test_seq, y_pred, zero_division=0))
-
-    # --- GRU (lighter: single layer, 32 units) ---
-    print("\nTraining GRU model...")
-    gru_model = Sequential([
-        Input(shape=(SEQUENCE_LENGTH, len(feature_columns))),
+    # --- GRU ---
+    print("\nTraining GRU...")
+    gru = Sequential([
+        Input(shape=(SEQUENCE_LENGTH, n_features)),
         GRU(32),
         Dropout(0.2),
-        Dense(16, activation="relu"),
-        Dense(1, activation="sigmoid"),
+        Dense(16, activation='relu'),
+        Dense(1, activation='sigmoid'),
     ])
-    gru_model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
-    gru_model.fit(
-        X_train_balanced,
-        y_train_balanced,
-        epochs=EPOCHS,
-        batch_size=BATCH_SIZE,
-        validation_data=(X_val, y_val),
-        class_weight=class_weights,
-        callbacks=[EarlyStopping(monitor="val_loss", patience=2, restore_best_weights=True)],
-        verbose=2,
-    )
+    gru = train_model(gru, X_bal, y_bal, X_val, y_val, cw)
+    gru_threshold = evaluate('GRU', gru, X_val, y_val, X_test, y_test)
 
-    gru_val_prob = gru_model.predict(X_val, verbose=0).ravel()
-    gru_best_threshold, gru_best_f1 = find_best_threshold(y_val, gru_val_prob)
-
-    gru_y_prob = gru_model.predict(X_test_seq, verbose=0).ravel()
-    gru_y_pred = (gru_y_prob >= gru_best_threshold).astype(int)
-    gru_precision, gru_recall, gru_f1, _ = precision_recall_fscore_support(
-        y_test_seq, gru_y_pred, labels=[1], zero_division=0,
-    )
-
-    gru_model.save(base_dir / "gru_model.h5")
-    joblib.dump(float(gru_best_threshold), base_dir / "gru_threshold.joblib")
-    print("Saved: gru_model.h5")
-    print("Saved: gru_threshold.joblib")
-
-    print("\nGRU Results")
-    print("Best threshold:", gru_best_threshold)
-    print("Validation F1:", round(gru_best_f1, 4))
-    print("Accuracy:", accuracy_score(y_test_seq, gru_y_pred))
-    print("Congestion Precision:", round(float(gru_precision[0]), 4))
-    print("Congestion Recall:", round(float(gru_recall[0]), 4))
-    print("Congestion F1:", round(float(gru_f1[0]), 4))
-    print(classification_report(y_test_seq, gru_y_pred, zero_division=0))
+    gru.save(base_dir / 'gru_model.h5')
+    joblib.dump(gru_threshold, base_dir / 'gru_threshold.joblib')
+    print("Saved: gru_model.h5  gru_threshold.joblib")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

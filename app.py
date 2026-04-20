@@ -34,9 +34,10 @@ LOOKUP_PATH = BASE_DIR / "chicago_hourly_lookup.csv"
 LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
 LSTM_SCALER_PATH = BASE_DIR / "lstm_scaler.joblib"
 LSTM_FEATURES_PATH = BASE_DIR / "lstm_feature_columns.joblib"
-LSTM_THRESHOLD_PATH = BASE_DIR / "lstm_threshold.joblib"
-GRU_MODEL_PATH = BASE_DIR / "gru_model.h5"
-GRU_THRESHOLD_PATH = BASE_DIR / "gru_threshold.joblib"
+LSTM_THRESHOLD_PATH      = BASE_DIR / "lstm_threshold.joblib"
+LSTM_BEST_THRESHOLD_PATH = BASE_DIR / "lstm_best_threshold.joblib"
+GRU_MODEL_PATH           = BASE_DIR / "gru_model.h5"
+GRU_THRESHOLD_PATH       = BASE_DIR / "gru_threshold.joblib"
 LR_MODEL_PATH  = BASE_DIR / "lr_model.joblib"
 GB_MODEL_PATH  = BASE_DIR / "gb_model.joblib"
 RF_MODEL_PATH  = BASE_DIR / "rf_model.joblib"
@@ -277,7 +278,8 @@ lstm_scaler, lstm_feature_columns, lstm_threshold = load_lstm_assets()
 if lstm_model is not None and lstm_scaler is not None and predict_btn:
     sequence = build_lstm_sequence(lookup, hour, day, lstm_scaler, lstm_feature_columns)
     lstm_prob = float(lstm_model.predict(sequence, verbose=0)[0][0])
-    lstm_pred = 1 if lstm_prob >= 0.5 else 0
+    lstm_best_t = joblib.load(LSTM_BEST_THRESHOLD_PATH) if LSTM_BEST_THRESHOLD_PATH.exists() else 0.5
+    lstm_pred = 1 if lstm_prob >= lstm_best_t else 0
 
     st.metric("Congestion Probability (LSTM)", f"{lstm_prob:.2f}")
 
