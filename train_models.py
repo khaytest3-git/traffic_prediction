@@ -5,11 +5,8 @@ Run this locally before deploying:
     python train_models.py
 
 Outputs:
-    lr_model.joblib
-    gb_model.joblib
-    rf_model.joblib
-    mlp_model.joblib
-    svm_model.joblib
+    lr_model.joblib, gb_model.joblib, rf_model.joblib,
+    mlp_model.joblib, svm_model.joblib
 """
 
 from pathlib import Path
@@ -39,6 +36,20 @@ MODEL_PATHS = {
     "svm": BASE_DIR / "svm_model.joblib",
 }
 
+FEATURE_COLS = ['HOUR', 'DAY_OF_WEEK', 'MONTH', 'IS_WEEKEND', 'IS_RUSH_HOUR',
+                'HOUR_SIN', 'HOUR_COS', 'DAY_SIN', 'DAY_COS']
+
+
+def engineer_features(df):
+    df = df.copy()
+    df['IS_WEEKEND']  = (df['DAY_OF_WEEK'] >= 6).astype(int)
+    df['IS_RUSH_HOUR'] = df['HOUR'].apply(lambda h: 1 if (7 <= h <= 9 or 16 <= h <= 19) else 0)
+    df['HOUR_SIN']    = np.sin(2 * np.pi * df['HOUR'] / 24)
+    df['HOUR_COS']    = np.cos(2 * np.pi * df['HOUR'] / 24)
+    df['DAY_SIN']     = np.sin(2 * np.pi * df['DAY_OF_WEEK'] / 7)
+    df['DAY_COS']     = np.cos(2 * np.pi * df['DAY_OF_WEEK'] / 7)
+    return df
+
 
 def load_dataset():
     for path in CANDIDATE_DATASETS:
@@ -49,9 +60,15 @@ def load_dataset():
 
 
 def prepare(df):
-    df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']].dropna()
+    needed = ['SPEED', 'HOUR', 'DAY_OF_WEEK']
+    if 'MONTH' in df.columns:
+        needed.append('MONTH')
+    df = df[needed].dropna()
     df = df[df['SPEED'] > 0].copy()
+    if 'MONTH' not in df.columns:
+        df['MONTH'] = 1  # fallback for sample CSV
     df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
+    df = engineer_features(df)
     return df
 
 
@@ -72,7 +89,7 @@ def main():
     print(f"Rows after cleaning: {len(df):,}")
     print(f"Congestion rate: {df['CONGESTION'].mean():.1%}\n")
 
-    X = df[['HOUR', 'DAY_OF_WEEK']]
+    X = df[FEATURE_COLS]
     y = df['CONGESTION']
 
     X_train, X_test, y_train, y_test = train_test_split(

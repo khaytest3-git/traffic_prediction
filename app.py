@@ -12,11 +12,31 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.utils.class_weight import compute_sample_weight
 
 BASE_DIR = Path(__file__).resolve().parent
+
+FEATURE_COLS = ['HOUR', 'DAY_OF_WEEK', 'MONTH', 'IS_WEEKEND', 'IS_RUSH_HOUR',
+                'HOUR_SIN', 'HOUR_COS', 'DAY_SIN', 'DAY_COS']
+
+
+def engineer_features(hour, day, month):
+    is_weekend  = int(day >= 6)
+    is_rush     = int(7 <= hour <= 9 or 16 <= hour <= 19)
+    hour_sin    = np.sin(2 * np.pi * hour / 24)
+    hour_cos    = np.cos(2 * np.pi * hour / 24)
+    day_sin     = np.sin(2 * np.pi * day / 7)
+    day_cos     = np.cos(2 * np.pi * day / 7)
+    return pd.DataFrame([{
+        'HOUR': hour, 'DAY_OF_WEEK': day, 'MONTH': month,
+        'IS_WEEKEND': is_weekend, 'IS_RUSH_HOUR': is_rush,
+        'HOUR_SIN': hour_sin, 'HOUR_COS': hour_cos,
+        'DAY_SIN': day_sin, 'DAY_COS': day_cos,
+    }])[FEATURE_COLS]
 LOOKUP_PATH = BASE_DIR / "chicago_hourly_lookup.csv"
 LSTM_MODEL_PATH = BASE_DIR / "lstm_model.h5"
 LSTM_SCALER_PATH = BASE_DIR / "lstm_scaler.joblib"
 LSTM_FEATURES_PATH = BASE_DIR / "lstm_feature_columns.joblib"
 LSTM_THRESHOLD_PATH = BASE_DIR / "lstm_threshold.joblib"
+GRU_MODEL_PATH = BASE_DIR / "gru_model.h5"
+GRU_THRESHOLD_PATH = BASE_DIR / "gru_threshold.joblib"
 LR_MODEL_PATH  = BASE_DIR / "lr_model.joblib"
 GB_MODEL_PATH  = BASE_DIR / "gb_model.joblib"
 RF_MODEL_PATH  = BASE_DIR / "rf_model.joblib"
@@ -37,6 +57,17 @@ def load_lstm_model():
         if not LSTM_MODEL_PATH.exists():
             return None
         return load_model(LSTM_MODEL_PATH)
+    except Exception:
+        return None
+
+
+@st.cache_resource
+def load_gru_model():
+    try:
+        from tensorflow.keras.models import load_model
+        if not GRU_MODEL_PATH.exists():
+            return None
+        return load_model(GRU_MODEL_PATH)
     except Exception:
         return None
 
@@ -82,9 +113,16 @@ def load_models():
     df = pd.read_csv(sample_path)
     df = df[['SPEED', 'HOUR', 'DAY_OF_WEEK']].dropna()
     df = df[df['SPEED'] > 0].copy()
+    df['MONTH'] = 1
     df['CONGESTION'] = np.where(df['SPEED'] < 20, 1, 0)
+    df['IS_WEEKEND']   = (df['DAY_OF_WEEK'] >= 6).astype(int)
+    df['IS_RUSH_HOUR'] = df['HOUR'].apply(lambda h: 1 if (7 <= h <= 9 or 16 <= h <= 19) else 0)
+    df['HOUR_SIN'] = np.sin(2 * np.pi * df['HOUR'] / 24)
+    df['HOUR_COS'] = np.cos(2 * np.pi * df['HOUR'] / 24)
+    df['DAY_SIN']  = np.sin(2 * np.pi * df['DAY_OF_WEEK'] / 7)
+    df['DAY_COS']  = np.cos(2 * np.pi * df['DAY_OF_WEEK'] / 7)
 
-    X = df[['HOUR', 'DAY_OF_WEEK']]
+    X = df[FEATURE_COLS]
     y = df['CONGESTION']
     X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
     weights = compute_sample_weight('balanced', y_train)
@@ -119,6 +157,7 @@ def load_models():
 lookup = load_lookup()
 lr_model, gb_model, rf_model, mlp_model, svm_model = load_models()
 lstm_model = load_lstm_model()
+gru_model_seq = load_gru_model()
 
 
 st.title("Traffic Congestion Prediction")
@@ -139,11 +178,18 @@ with col1:
         format_func=lambda x: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][x-1]
     )
 
+    month = st.selectbox(
+        "Select Month",
+        list(range(1, 13)),
+        index=0,
+        format_func=lambda x: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][x-1]
+    )
+
     predict_btn = st.button("Predict")
 
 with col2:
     if predict_btn:
-        input_data = pd.DataFrame({'HOUR': [hour], 'DAY_OF_WEEK': [day]})
+        input_data = engineer_features(hour, day, month)
 
         prediction = lr_model.predict(input_data)[0]
         probability = lr_model.predict_proba(input_data)[0][1]
@@ -161,7 +207,7 @@ st.markdown("---")
 st.subheader("Gradient Boosting Prediction")
 
 if predict_btn:
-    input_data = pd.DataFrame({'HOUR': [hour], 'DAY_OF_WEEK': [day]})
+    input_data = engineer_features(hour, day, month)
 
     gb_prediction = gb_model.predict(input_data)[0]
     gb_probability = gb_model.predict_proba(input_data)[0][1]
@@ -179,7 +225,7 @@ st.markdown("---")
 st.subheader("Random Forest Prediction")
 
 if predict_btn:
-    input_data = pd.DataFrame({'HOUR': [hour], 'DAY_OF_WEEK': [day]})
+    input_data = engineer_features(hour, day, month)
     rf_prediction = rf_model.predict(input_data)[0]
     rf_probability = rf_model.predict_proba(input_data)[0][1]
 
@@ -195,7 +241,7 @@ st.markdown("---")
 st.subheader("MLP Neural Network Prediction")
 
 if predict_btn:
-    input_data = pd.DataFrame({'HOUR': [hour], 'DAY_OF_WEEK': [day]})
+    input_data = engineer_features(hour, day, month)
     mlp_prediction = mlp_model.predict(input_data)[0]
     mlp_probability = mlp_model.predict_proba(input_data)[0][1]
 
@@ -211,7 +257,7 @@ st.markdown("---")
 st.subheader("SVM Prediction")
 
 if predict_btn:
-    input_data = pd.DataFrame({'HOUR': [hour], 'DAY_OF_WEEK': [day]})
+    input_data = engineer_features(hour, day, month)
     svm_prediction = svm_model.predict(input_data)[0]
     svm_probability = svm_model.predict_proba(input_data)[0][1]
 
@@ -250,6 +296,28 @@ elif lstm_scaler is None:
 
 
 st.markdown("---")
+st.subheader("GRU Prediction")
+
+if gru_model_seq is not None and lstm_scaler is not None and predict_btn:
+    gru_sequence = build_lstm_sequence(lookup, hour, day, lstm_scaler, lstm_feature_columns)
+    gru_prob = float(gru_model_seq.predict(gru_sequence, verbose=0)[0][0])
+    gru_threshold = joblib.load(GRU_THRESHOLD_PATH) if GRU_THRESHOLD_PATH.exists() else 0.5
+    gru_pred = 1 if gru_prob >= gru_threshold else 0
+
+    st.metric("Congestion Probability (GRU)", f"{gru_prob:.2f}")
+
+    if gru_pred == 1:
+        st.error("Below-average city speed predicted (GRU)")
+    else:
+        st.success("Normal city speed predicted (GRU)")
+
+    st.caption(f"GRU uses the same 6-hour sequence as LSTM but with a single GRU layer (32 units) — fewer parameters, comparable accuracy.")
+
+elif gru_model_seq is None:
+    st.warning("GRU model not found. Run lstm/lstm_model.py to generate gru_model.h5.")
+
+
+st.markdown("---")
 st.subheader("Congestion Pattern by Hour")
 
 hourly_congestion = lookup.groupby('HOUR')['CONGESTION_RATE'].mean()
@@ -276,6 +344,9 @@ A feedforward neural network with two hidden layers (64 and 32 neurons). Capture
 
 **SVM (Support Vector Machine)**
 Finds the maximum-margin decision boundary between congested and non-congested classes. Uses a linear kernel via SGDClassifier (stochastic gradient descent with modified Huber loss), which scales efficiently to large datasets and supports native probability estimates and class balancing.
+
+**GRU (Gated Recurrent Unit)**
+A lighter alternative to LSTM. Uses the same 6-hour city-wide sequence but replaces the two LSTM layers with a single GRU layer (32 units). GRU combines the forget and input gates into a single update gate, reducing the number of parameters while retaining the ability to capture temporal dependencies. Faster to train and often matches LSTM accuracy on short sequences.
 
 **LSTM (Long Short-Term Memory)**
 Trained on a city-wide weekly traffic profile — the average speed across all Chicago road segments for each hour of the week. This gives the LSTM a genuine temporal sequence to learn from (how Monday morning rush connects to the afternoon, how Friday evening transitions, etc.) rather than mixing unrelated road segments.

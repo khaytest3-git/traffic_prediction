@@ -6,7 +6,7 @@ import pandas as pd
 from sklearn.metrics import accuracy_score, classification_report, f1_score, precision_recall_fscore_support
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.layers import Dropout, Input, LSTM, Dense
+from tensorflow.keras.layers import Dropout, Input, LSTM, GRU, Dense
 from tensorflow.keras.models import Sequential
 
 
@@ -224,6 +224,50 @@ def main():
     print("Congestion Recall:", round(float(recall[0]), 4))
     print("Congestion F1:", round(float(f1[0]), 4))
     print(classification_report(y_test_seq, y_pred, zero_division=0))
+
+    # --- GRU (lighter: single layer, 32 units) ---
+    print("\nTraining GRU model...")
+    gru_model = Sequential([
+        Input(shape=(SEQUENCE_LENGTH, len(feature_columns))),
+        GRU(32),
+        Dropout(0.2),
+        Dense(16, activation="relu"),
+        Dense(1, activation="sigmoid"),
+    ])
+    gru_model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+    gru_model.fit(
+        X_train_balanced,
+        y_train_balanced,
+        epochs=EPOCHS,
+        batch_size=BATCH_SIZE,
+        validation_data=(X_val, y_val),
+        class_weight=class_weights,
+        callbacks=[EarlyStopping(monitor="val_loss", patience=2, restore_best_weights=True)],
+        verbose=2,
+    )
+
+    gru_val_prob = gru_model.predict(X_val, verbose=0).ravel()
+    gru_best_threshold, gru_best_f1 = find_best_threshold(y_val, gru_val_prob)
+
+    gru_y_prob = gru_model.predict(X_test_seq, verbose=0).ravel()
+    gru_y_pred = (gru_y_prob >= gru_best_threshold).astype(int)
+    gru_precision, gru_recall, gru_f1, _ = precision_recall_fscore_support(
+        y_test_seq, gru_y_pred, labels=[1], zero_division=0,
+    )
+
+    gru_model.save(base_dir / "gru_model.h5")
+    joblib.dump(float(gru_best_threshold), base_dir / "gru_threshold.joblib")
+    print("Saved: gru_model.h5")
+    print("Saved: gru_threshold.joblib")
+
+    print("\nGRU Results")
+    print("Best threshold:", gru_best_threshold)
+    print("Validation F1:", round(gru_best_f1, 4))
+    print("Accuracy:", accuracy_score(y_test_seq, gru_y_pred))
+    print("Congestion Precision:", round(float(gru_precision[0]), 4))
+    print("Congestion Recall:", round(float(gru_recall[0]), 4))
+    print("Congestion F1:", round(float(gru_f1[0]), 4))
+    print(classification_report(y_test_seq, gru_y_pred, zero_division=0))
 
 
 if __name__ == "__main__":
